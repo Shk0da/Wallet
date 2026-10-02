@@ -1,0 +1,22 @@
+{
+    "brokers": {
+        "tinkoff": {
+            "enabled": true,
+            "apiKey": ""
+        },
+        "finam": {
+            "enabled": true,
+            "apiKey": ""
+        }
+    },
+    "auth": {
+        "password": ""
+    },
+    "sync": {
+        "mock": false,
+        "insecureSsl": true,
+        "requestTimeoutSec": 30,
+        "bondsCacheTtlHours": 24,
+        "historyLimit": 365
+    }
+}

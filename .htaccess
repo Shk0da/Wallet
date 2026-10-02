@@ -1,0 +1,9 @@
+# Служебные данные: токены брокеров, финансовые данные, кэши и временные файлы.
+# Фронтенд читает их только через PHP-эндпоинты (api.php / portfolio.php / sync.php),
+# где действует авторизация по паролю из settings.json.
+<FilesMatch "^(settings\.json|data\.json|portfolio\.json|bonds-cache\.json|sync\.lock)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "\.tmp$">
+    Require all denied
+</FilesMatch>
