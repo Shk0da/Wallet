@@ -387,11 +387,21 @@ final class FinamClient {
         $this->insecure = $insecure;
     }
 
+    /** Хвост ошибки из тела ответа Finam: там JSON с message («Api token could
+     *  not be verified» и т.п.) — без него «HTTP 401» не говорит ничего. */
+    private static function errTail(string $body): string {
+        $d = json_decode($body, true);
+        $msg = is_array($d) && isset($d['message']) && is_string($d['message']) ? $d['message'] : '';
+        if ($msg === '') $msg = trim(preg_replace('/\s+/', ' ', (string)$body) ?? '');
+        if ($msg !== '') $msg = ' — ' . mb_substr($msg, 0, 140);
+        return $msg;
+    }
+
     public function authenticate(): void {
         [$code, $body] = httpCall('POST', FINAM_BASE . '/v1/sessions',
             json_encode(['secret' => $this->secret]),
             ['Content-Type: application/json'], $this->timeout, $this->insecure);
-        if ($code !== 200) throw new RuntimeException('Finam auth: HTTP ' . $code);
+        if ($code !== 200) throw new RuntimeException('Finam auth: HTTP ' . $code . self::errTail($body));
         $data = json_decode($body, true);
         $token = (string)($data['token'] ?? '');
         if ($token === '') throw new RuntimeException('Finam auth: токен не получен');
@@ -403,7 +413,7 @@ final class FinamClient {
         [$code, $body] = httpCall('POST', FINAM_BASE . '/v1/sessions/details',
             json_encode(['token' => $this->token]),
             ['Content-Type: application/json'], $this->timeout, $this->insecure);
-        if ($code !== 200) throw new RuntimeException('Finam details: HTTP ' . $code);
+        if ($code !== 200) throw new RuntimeException('Finam details: HTTP ' . $code . self::errTail($body));
         $data = json_decode($body, true);
         return array_values(array_filter(array_map(
             static fn($id): string => is_string($id) ? $id : '',
@@ -415,7 +425,7 @@ final class FinamClient {
     public function getAccount(string $accountId): array {
         [$code, $body] = httpCall('GET', FINAM_BASE . '/v1/accounts/' . rawurlencode($accountId), null,
             ['Authorization: Bearer ' . $this->token], $this->timeout, $this->insecure);
-        if ($code !== 200) throw new RuntimeException('Finam account: HTTP ' . $code);
+        if ($code !== 200) throw new RuntimeException('Finam account: HTTP ' . $code . self::errTail($body));
         $data = json_decode($body, true);
         $positions = [];
         foreach (($data['positions'] ?? []) as $p) {

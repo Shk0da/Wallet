@@ -1,0 +1,24 @@
+{
+  "name": "wallet",
+  "version": "1.0.0",
+  "description": "Личный финансовый дашборд: все деньги семьи в одном окне. Приложение совмещает два режима — **📅 Календарь** и **📈 Портфель**, между которыми можно переключаться одним кликом.",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shk0da/Wallet.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Shk0da/Wallet/issues"
+  },
+  "homepage": "https://github.com/Shk0da/Wallet#readme",
+  "dependencies": {
+    "jsdom": "^30.1.1"
+  }
+}

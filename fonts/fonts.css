@@ -1,0 +1,53 @@
+/*!
+ * TDS Fonts v2.0.0
+ * Taiga UI Design System
+ * Last update: 2026-03-24
+ */
+@font-face {
+    font-family: 'tuiText';
+    src: url('NeueHaasUnicaW1G-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'tuiText';
+    src: url('NeueHaasUnicaW1G-Medium.woff2') format('woff2');
+    font-weight: bold;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'tuiHeading';
+    src: url('T-Sans_Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'tuiHeading';
+    src: url('T-Sans_Medium.woff2') format('woff2');
+    font-weight: bold;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'tuiHeading';
+    src: url('T-Sans_Bold.woff2') format('woff2');
+    font-weight: 800;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'tuiCode';
+    src: url('JetBrainsMono-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Open Runde';
+    src: url('OpenRunde-Bold.woff2') format('woff2');
+    font-weight: bold;
+    font-style: normal;
+}

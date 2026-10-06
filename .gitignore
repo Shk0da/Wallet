@@ -1,0 +1,28 @@
+# Данные (личные)
+data.json
+portfolio.json
+settings.json
+notify.log
+sync.lock
+bonds-cache.json
+
+# Android: сборочные артефакты
+android/assets/www/
+android/build/
+dist/
+tools/android-sdk/
+tools/cmdline-tools.zip
+
+# Подпись APK
+*.keystore
+tools/keystore.properties
+
+# Node (jsdom-тесты)
+node_modules/
+package-lock.json
+tools/android-avd/
+tools/android-home/
+
+# Скриншоты верификации (эмулятор)
+tools/shots/
+.DS_Store

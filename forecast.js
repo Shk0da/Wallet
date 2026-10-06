@@ -135,7 +135,7 @@ function monthlyInvestmentFromCalendar(cfg, transactions, categories, today) {
         if (t.endDate && typeof getNextOccurrenceDate === 'function') {
             const next = getNextOccurrenceDate(t, today);
             const nextStr = next
-                ? next.getFullYear() + '-' + String(next.getMonth() + 1).padStart(2, '0') + '-' + String(next.getDate()).padStart(2, '0')
+                ? next.getFullYear() + '-' + ('0' + (next.getMonth() + 1)).slice(-2) + '-' + ('0' + next.getDate()).slice(-2)
                 : null;
             if (nextStr && nextStr > t.endDate) continue;
         }

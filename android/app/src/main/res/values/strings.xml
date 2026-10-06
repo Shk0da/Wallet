@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Шакал</string>
+    <!-- Версию правит tools/build-apk.sh (синхронно с версией в «О приложении») -->
+    <string name="app_version">1.0</string>
+</resources>

@@ -75,7 +75,7 @@
 
     function todayISO() {
         const d = new Date();
-        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
     }
 
     function fmtDateTime(iso) {
@@ -120,21 +120,46 @@
 
     function setView(view) {
         document.body.classList.toggle('dashboard-mode', view === 'dashboard');
+        document.body.classList.toggle('balance-mode', view === 'balance');
         for (const b of document.querySelectorAll('#viewNav .view-btn')) {
             b.classList.toggle('active', b.dataset.view === view);
         }
         // Шапка соответствует активному виду
         const h1 = document.querySelector('header h1');
-        if (h1) h1.textContent = view === 'dashboard' ? '📈 Портфель' : '📅 Финансовый календарь';
+        if (h1) h1.textContent = view === 'dashboard' ? '📈 Портфель'
+            : (view === 'balance' ? '📊 Баланс по дням' : '📅 Финансовый календарь');
         try { localStorage.setItem('walletView', view); } catch (e) { /* приватный режим */ }
         window.scrollTo({ top: 0 });
+        // Экран «Баланс по дням» строится лениво при входе (app.js)
+        if (view === 'balance' && window.__walletShowBalance) window.__walletShowBalance();
         // Взнос из календаря мог измениться — прогноз всегда свежий при входе на вкладку
         if (view === 'dashboard' && state.portfolio && investmentConfig) renderForecast();
+    }
+
+    // ---------- Разделы портфеля (переключаются из меню ☰) ----------
+
+    const PF_SECTIONS = ['overview', 'assets', 'payouts', 'forecast'];
+
+    function setPfSection(section) {
+        if (PF_SECTIONS.indexOf(section) === -1) section = 'overview';
+        const content = $('dashboardContent');
+        if (content) content.setAttribute('data-section', section);
+        try { localStorage.setItem('walletPfSection', section); } catch (e) { /* приватный режим */ }
     }
 
     // ---------- Загрузка portfolio.json ----------
 
     async function loadPortfolio() {
+        // Автономный режим: последний результат синхронизации лежит в localStorage
+        if (window.WALLET_STANDALONE) {
+            try {
+                state.portfolio = JSON.parse(localStorage.getItem('walletPortfolio') || 'null');
+            } catch (e) {
+                state.portfolio = null;
+            }
+            renderPortfolio();
+            return;
+        }
         try {
             const resp = await fetch(BASE + '/portfolio.php?t=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -165,7 +190,6 @@
         renderSectors(p);
         renderPaymentsChart(p);
         renderPaymentsCalendar(p);
-        renderHoldings(p);
         renderHoldingsTable(p);
         renderAccounts(p);
         renderGoal(p);
@@ -274,7 +298,7 @@
         row.appendChild(kpiCard('🪙', 'Пассивная доходность', Charts.fmt.pct(t.passiveYieldPct), '% годовых от стоимости'));
         // Выплаты в текущем месяце из paymentsByMonth
         const now = new Date();
-        const curMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        const curMonth = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
         const cm = (t.paymentsByMonth || []).find(m => m.month === curMonth);
         const cmCoupons = cm ? (cm.coupons || 0) : 0, cmDiv = cm ? (cm.dividends || 0) : 0;
         row.appendChild(kpiCard('🗓', 'Выплаты в этом месяце',
@@ -401,23 +425,6 @@
             return;
         }
         withTableToggle(container, Charts.bars({ groups, height: 230 }));
-    }
-
-    function renderHoldings(p) {
-        const container = $('chartHoldings');
-        const list = (p.holdings || []).slice(0, 10).map(h => ({
-            label: h.name || h.ticker,
-            sub: (h.ticker ? h.ticker + ' · ' : '') + (Charts.TYPE_LABELS[h.instrumentType] || '') +
-                 ' · ' + (h.quantity % 1 === 0 ? h.quantity.toLocaleString('ru-RU') : h.quantity.toFixed(2)) + ' шт',
-            value: h.value,
-            valueLabel: Charts.fmt.compact(h.value),
-            badge: h.pnlPct != null ? {
-                text: (h.pnl >= 0 ? '+' : '') + Charts.fmt.pct(h.pnlPct),
-                positive: h.pnl >= 0
-            } : null
-        }));
-        if (list.length === 0) { container.textContent = 'Нет позиций'; return; }
-        withTableToggle(container, Charts.hbars({ rows: list }));
     }
 
     // Счёт «пустой»: нет ни стоимости позиций, ни денег
@@ -656,16 +663,16 @@
             const cells = [
                 asset,
                 cell(h.quantity != null ? (h.quantity % 1 === 0 ? h.quantity.toLocaleString('ru-RU') : h.quantity.toFixed(2)) : '—'),
-                cell(h.avgPrice != null ? Charts.fmt.compact(h.avgPrice) : '—', 'hide-sm'),
-                cell(Charts.fmt.compact(h.cost), 'hide-sm'),
+                cell(h.avgPrice != null ? Charts.fmt.compact(h.avgPrice) : '—'),
+                cell(Charts.fmt.compact(h.cost)),
                 cell(Charts.fmt.compact(h.value)),
                 cellWithSub(h.pnl != null ? (h.pnl >= 0 ? '+' : '') + Charts.fmt.compact(h.pnl) : '—',
                     h.pnlPct != null ? (h.pnl >= 0 ? '+' : '') + Charts.fmt.pct(h.pnlPct) : null,
                     h.pnl != null ? (h.pnl >= 0 ? 'ht-pos' : 'ht-neg') : null),
                 cell(Charts.fmt.pct(h.share)),
-                cell(h.yieldPct != null ? Charts.fmt.pct(h.yieldPct) : '—', 'hide-sm'),
+                cell(h.yieldPct != null ? Charts.fmt.pct(h.yieldPct) : '—'),
                 cellWithSub(h.nextPay ? h.nextPay.split('-').reverse().join('.') : '—',
-                    h.nextPayAmount ? Charts.fmt.compact(h.nextPayAmount) : null, null, 'hide-xs'),
+                    h.nextPayAmount ? Charts.fmt.compact(h.nextPayAmount) : null, null),
                 brokersCell(h.brokers)
             ];
             for (const c of cells) tr.appendChild(c);
@@ -712,7 +719,6 @@
 
     function brokersCell(sources) {
         const td = document.createElement('td');
-        td.classList.add('hide-sm');
         const seen = new Set();
         for (const s of sources || []) {
             const norm = BROKER_DOT[s] ? (s === 'tcs' ? 'tinkoff' : s) : null;
@@ -935,7 +941,7 @@
         // пара слайдеров связана: доли всегда дают в сумме 100% —
         // если в конфиге лежат несимметричные значения, приводим к дополнительной паре
         if (brokers.length === 2
-            && Math.round(+(cfg.split.tinkoff ?? 50)) + Math.round(+(cfg.split.finam ?? 50)) !== 100) {
+            && Math.round(+('tinkoff' in cfg.split ? cfg.split.tinkoff : 50)) + Math.round(+('finam' in cfg.split ? cfg.split.finam : 50)) !== 100) {
             const sT5 = Math.max(0, Math.min(100, Math.round(split.tinkoff * 100 / 5) * 5));
             cfg.split.tinkoff = sT5;
             cfg.split.finam = 100 - sT5;
@@ -977,7 +983,7 @@
         rowT.style.display = brokers.includes('tinkoff') ? '' : 'none';
         rowF.style.display = brokers.includes('finam') ? '' : 'none';
         if (!state.splitTouched) {
-            const sT5 = Math.max(0, Math.min(100, Math.round((cfg.split.tinkoff ?? 50) / 5) * 5));
+            const sT5 = Math.max(0, Math.min(100, Math.round(('tinkoff' in cfg.split ? cfg.split.tinkoff : 50) / 5) * 5));
             $('fcSplitTinkoff').value = String(sT5);
             $('fcSplitFinam').value = String(100 - sT5); // зеркало: в сумме всегда 100
         }
@@ -1068,22 +1074,40 @@
         }));
 
         // --- таблица по годам ---
+        // На узком экране суммы — компактным форматом («1,28 млн ₽»), на широком — полностью.
+        // Таблица в обёртке с горизонтальным скроллом: колонки не сжимаются, а едут вбок.
         const tableBox = $('fcTable');
         tableBox.textContent = '';
+        const compact = window.matchMedia ? window.matchMedia('(max-width: 768px)').matches : false;
+        const fmtCell = compact ? Charts.fmt.compact : Charts.fmt.rub;
         const heads = ['Год', 'Вложено', 'Стоимость', 'Прибыль', 'Пассивный/год'];
-        if (inflation > 0) heads.push('Пассивный (реальный)');
-        const rows = years.map(y => {
+        if (inflation > 0) heads.push('Реальный');
+        // Длинный горизонт — показываем вехи (каждый год до 5-го, дальше каждые 5):
+        // все точки остаются на графике, таблица — компактная сводка
+        const shown = state.horizonYears > 10
+            ? years.filter(y => y.year <= 5 || y.year % 5 === 0)
+            : years;
+        const rows = shown.map(y => {
             const cells = [
                 { text: y.year === 0 ? 'старт' : y.year + ' ' + yearsWord(y.year) },
-                { text: Charts.fmt.rub(y.invested) },
-                { text: Charts.fmt.rub(y.value) },
-                { text: Charts.fmt.rub(y.earnings), color: y.earnings >= 0 ? Charts.C.income : Charts.C.expense },
-                { text: Charts.fmt.rub(y.passiveYear) }
+                { text: fmtCell(y.invested) },
+                { text: fmtCell(y.value) },
+                { text: fmtCell(y.earnings), color: y.earnings >= 0 ? Charts.C.income : Charts.C.expense },
+                { text: fmtCell(y.passiveYear) }
             ];
-            if (inflation > 0) cells.push({ text: Charts.fmt.rub(y.realPassiveYear) });
+            if (inflation > 0) cells.push({ text: fmtCell(y.realPassiveYear) });
             return cells;
         });
-        tableBox.appendChild(Charts.tableEl(heads, rows));
+        const wrap = document.createElement('div');
+        wrap.className = 'chart-scroll';
+        wrap.appendChild(Charts.tableEl(heads, rows));
+        tableBox.appendChild(wrap);
+        if (shown.length < years.length) {
+            const note = document.createElement('div');
+            note.className = 'fc-table-note';
+            note.textContent = 'Вехи: каждый год до 5-го, далее каждые 5 — все точки есть на графике';
+            tableBox.appendChild(note);
+        }
     }
 
     const saveConfigSoon = debounce(() => {
@@ -1097,7 +1121,7 @@
         if (mode === 'run') {
             state.syncing = true;
             btn.disabled = true;
-            btn.innerHTML = '<span class="sync-ico spin">🔄</span> Синхронизация…';
+            btn.innerHTML = '<span class="sync-ico spin">🔄</span>';
             status.className = 'sync-status running';
             status.textContent = message || 'Подключение…';
             wrap.hidden = false;
@@ -1108,7 +1132,7 @@
         } else {
             state.syncing = false;
             btn.disabled = false;
-            btn.innerHTML = '<span class="sync-ico">🔄</span> Синхронизация';
+            btn.innerHTML = '<span class="sync-ico">🔄</span>';
             $('syncProgressFill').classList.remove('live');
             status.className = 'sync-status' + (mode === 'error' ? ' error' : '');
             status.textContent = message || 'Готов к синхронизации';
@@ -1119,6 +1143,83 @@
     async function runSync(mock = false) {
         if (state.syncing) return;
         setSyncUI('run', mock ? 'Генерация демо-данных…' : 'Подключение…');
+
+        // Обработчик событий NDJSON — общий для серверного стрима (sync.php)
+        // и автономного пайплайна (WalletSync в APK): формы событий совпадают.
+        const brokerErrors = {}; // брокер → текст последней ошибки (для итога)
+        const handle = (line) => {
+            if (!line || !line.trim()) return;
+            let ev;
+            try { ev = JSON.parse(line); } catch (e) { return; }
+            if (ev.event === 'start') {
+                const b = ev.brokers || {};
+                $('chipTinkoff').classList.toggle('absent', !b.tinkoff);
+                $('chipFinam').classList.toggle('absent', !b.finam);
+                $('chipTinkoff').classList.toggle('running', !!b.tinkoff);
+                $('chipFinam').classList.toggle('running', !!b.finam);
+            } else if (ev.event === 'log') {
+                $('syncProgressFill').style.width = Math.round((ev.progress || 0) * 100) + '%';
+                if (ev.message) $('syncStatus').textContent = ev.message;
+            } else if (ev.event === 'broker_status') {
+                const chip = $(ev.broker === 'tinkoff' ? 'chipTinkoff' : 'chipFinam');
+                chip.classList.remove('running', 'ok', 'error', 'absent');
+                if (ev.status === 'skipped') chip.classList.add('absent');
+                else chip.classList.add(ev.status === 'ok' ? 'ok' : ev.status === 'error' ? 'error' : 'running');
+                if (ev.status === 'error' && ev.error) {
+                    brokerErrors[ev.broker] = ev.error;
+                    $('syncStatus').textContent = BROKER_TITLES[ev.broker] + ': ' + ev.error;
+                    chip.title = ev.error;
+                    // #syncStatus на мобиле скрыт — ошибку брокера видно только тостом
+                    toast('❌ ' + BROKER_TITLES[ev.broker] + ': ' + ev.error);
+                } else if (ev.status === 'ok') {
+                    delete brokerErrors[ev.broker];
+                }
+            } else if (ev.event === 'busy') {
+                setSyncUI('idle', 'Синхронизация уже запущена в другой вкладке');
+                toast('⏳ Синхронизация уже идёт — подождите');
+            } else if (ev.event === 'error') {
+                setSyncUI('error', 'Ошибка: ' + (ev.message || 'неизвестная'));
+                toast('❌ ' + (ev.message || 'Ошибка синхронизации'));
+            } else if (ev.event === 'done') {
+                $('syncProgressFill').style.width = '100%';
+                const pf = ev.portfolio || {};
+                const failed = Object.keys(brokerErrors);
+                if (ev.saved) {
+                    setSyncUI('idle', 'Синхронизация завершена' +
+                        (pf.value != null ? ' · стоимость ' + Charts.fmt.compact(pf.value) : ''));
+                    if (failed.length) {
+                        // часть брокеров упала — «всё хорошо» было бы враньём
+                        toast('⚠️ Обновлено без ' + failed.map(b => BROKER_TITLES[b]).join(', ') +
+                            ': ' + brokerErrors[failed[0]]);
+                    } else {
+                        toast('✅ Данные обновлены' + (pf.value != null ? ': ' + Charts.fmt.compact(pf.value) : ''));
+                    }
+                    loadPortfolio();
+                } else {
+                    setSyncUI('error', ev.message || 'Данные не сохранены');
+                    toast('⚠️ ' + (ev.message || 'Не удалось сохранить данные'));
+                    if (!state.portfolio) loadPortfolio(); // мог создаться файл, а у нас его нет
+                }
+            }
+        };
+
+        // Автономный режим: пайплайн целиком на устройстве, HTTP — через Java-мост
+        if (window.WALLET_STANDALONE) {
+            if (!window.WalletSync) {
+                setSyncUI('error', 'Модуль синхронизации недоступен');
+                toast('❌ Модуль синхронизации недоступен');
+                return;
+            }
+            try {
+                await WalletSync.runSync(mock, handle);
+                if (state.syncing) setSyncUI('idle', 'Синхронизация завершена');
+            } catch (e) {
+                setSyncUI('error', 'Ошибка: ' + (e && e.message ? e.message : 'неизвестная'));
+                toast('❌ Ошибка синхронизации');
+            }
+            return;
+        }
+
         try {
             const resp = await fetch(BASE + '/sync.php', {
                 method: 'POST',
@@ -1136,50 +1237,6 @@
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-
-            const handle = (line) => {
-                if (!line.trim()) return;
-                let ev;
-                try { ev = JSON.parse(line); } catch (e) { return; }
-                if (ev.event === 'start') {
-                    const b = ev.brokers || {};
-                    $('chipTinkoff').classList.toggle('absent', !b.tinkoff);
-                    $('chipFinam').classList.toggle('absent', !b.finam);
-                    $('chipTinkoff').classList.toggle('running', !!b.tinkoff);
-                    $('chipFinam').classList.toggle('running', !!b.finam);
-                } else if (ev.event === 'log') {
-                    $('syncProgressFill').style.width = Math.round((ev.progress || 0) * 100) + '%';
-                    if (ev.message) $('syncStatus').textContent = ev.message;
-                } else if (ev.event === 'broker_status') {
-                    const chip = $(ev.broker === 'tinkoff' ? 'chipTinkoff' : 'chipFinam');
-                    chip.classList.remove('running', 'ok', 'error', 'absent');
-                    if (ev.status === 'skipped') chip.classList.add('absent');
-                    else chip.classList.add(ev.status === 'ok' ? 'ok' : ev.status === 'error' ? 'error' : 'running');
-                    if (ev.status === 'error' && ev.error) {
-                        $('syncStatus').textContent = BROKER_TITLES[ev.broker] + ': ' + ev.error;
-                        chip.title = ev.error;
-                    }
-                } else if (ev.event === 'busy') {
-                    setSyncUI('idle', 'Синхронизация уже запущена в другой вкладке');
-                    toast('⏳ Синхронизация уже идёт — подождите');
-                } else if (ev.event === 'error') {
-                    setSyncUI('error', 'Ошибка: ' + (ev.message || 'неизвестная'));
-                    toast('❌ ' + (ev.message || 'Ошибка синхронизации'));
-                } else if (ev.event === 'done') {
-                    $('syncProgressFill').style.width = '100%';
-                    const pf = ev.portfolio || {};
-                    if (ev.saved) {
-                        setSyncUI('idle', 'Синхронизация завершена' +
-                            (pf.value != null ? ' · стоимость ' + Charts.fmt.compact(pf.value) : ''));
-                        toast('✅ Данные обновлены' + (pf.value != null ? ': ' + Charts.fmt.compact(pf.value) : ''));
-                        loadPortfolio();
-                    } else {
-                        setSyncUI('error', ev.message || 'Данные не сохранены');
-                        toast('⚠️ ' + (ev.message || 'Не удалось сохранить данные'));
-                        if (!state.portfolio) loadPortfolio(); // мог создаться файл, а у нас его нет
-                    }
-                }
-            };
 
             for (;;) {
                 const { done, value } = await reader.read();
@@ -1351,7 +1408,55 @@
         });
         let saved = null;
         try { saved = localStorage.getItem('walletView'); } catch (e) { /* ignore */ }
-        setView(saved === 'dashboard' ? 'dashboard' : 'calendar');
+        setView(saved === 'dashboard' ? 'dashboard' : (saved === 'balance' ? 'balance' : 'calendar'));
+
+        // Сохранённый раздел портфеля
+        let savedPf = null;
+        try { savedPf = localStorage.getItem('walletPfSection'); } catch (e) { /* ignore */ }
+        setPfSection(savedPf || 'overview');
+
+        // Меню ☰ (drawer)
+        const drawerOverlay = $('drawerOverlay');
+        function openDrawer() {
+            // подсветка текущего пункта: раздел портфеля / экран баланса / календарь
+            let cur = 'calendar';
+            if (document.body.classList.contains('dashboard-mode')) {
+                cur = 'pf-' + (($('dashboardContent').getAttribute('data-section')) || 'overview');
+            } else if (document.body.classList.contains('balance-mode')) {
+                cur = 'balance';
+            }
+            for (const it of document.querySelectorAll('#appDrawer .drawer-item')) {
+                it.classList.toggle('active', it.dataset.nav === cur);
+            }
+            drawerOverlay.hidden = false;
+            document.body.classList.add('drawer-open');
+        }
+        function closeDrawer() {
+            document.body.classList.remove('drawer-open');
+            // анимации уходят 0.28с — потом убираем оверлей из потока
+            setTimeout(() => {
+                if (!document.body.classList.contains('drawer-open')) drawerOverlay.hidden = true;
+            }, 320);
+        }
+        $('menuBtn').addEventListener('click', openDrawer);
+        $('drawerClose').addEventListener('click', closeDrawer);
+        drawerOverlay.addEventListener('click', closeDrawer);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.body.classList.contains('drawer-open')) closeDrawer();
+        });
+        $('appDrawer').addEventListener('click', (e) => {
+            const item = e.target instanceof Element ? e.target.closest('.drawer-item') : null;
+            if (!item) return;
+            // категории и отмена — кнопки в шапке календаря, в меню только навигация
+            const navTo = item.dataset.nav;
+            if (navTo === 'calendar' || navTo === 'balance') {
+                setView(navTo);
+            } else {
+                setView('dashboard');
+                setPfSection(navTo.replace(/^pf-/, ''));
+            }
+            closeDrawer();
+        });
 
         // Синхронизация
         $('syncBtn').addEventListener('click', () => runSync(false));
@@ -1365,6 +1470,11 @@
         document.addEventListener('wallet:data-loaded', () => {
             restoreForecastInputsFromConfig();
             if (state.portfolio) { renderForecast(); renderGoal(state.portfolio); }
+        });
+
+        // Импорт бэкапа принёс портфель в localStorage → перечитать и перерисовать
+        document.addEventListener('wallet:portfolio-imported', () => {
+            if (window.WALLET_STANDALONE) loadPortfolio();
         });
 
         // Календарь изменил операции/категории: сумма «Инвестиций» из календаря —

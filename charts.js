@@ -23,12 +23,17 @@ const Charts = (() => {
     'use strict';
 
     // ---------- Палитра (Taiga UI; проверена валидатором, светлая тема) ----------
+    // Цвета серий фиксированы (тема их не меняет), а чернила/сетка/поверхность —
+    // токены темы через var(): уже нарисованные SVG перекрашиваются сами при
+    // переключении html.dark, без перерендера. var() живёт только в style,
+    // поэтому el() ниже переносит такие fill/stroke из атрибутов в style.
     const C = {
         primary: '#428BF9', deep: '#F59200', teal: '#2ABBF4',
         tinkoff: '#FFDD2D', finam: '#428BF9',
         income: '#00B92D', expense: '#F52222',
-        ink: '#000000CC', ink2: '#0000008A', grid: '#EDEFF2', surface: '#FFFFFF',
-        gray: '#333333'
+        ink: 'var(--tui-text)', ink2: 'var(--tui-text-2)',
+        grid: 'var(--tui-border-soft)', surface: 'var(--tui-surface)',
+        gray: 'var(--tui-text)'
     };
     // Категориальный ряд — фиксированный порядок, не цикл смещений (dataviz)
     const CATEGORICAL = ['#428BF9', '#F59200', '#D08FFF', '#00A328', '#FF7A91', '#2ABBF4', '#FF6347', '#66A3FF'];
@@ -43,7 +48,14 @@ const Charts = (() => {
     const TYPE_COLORS = { share: C.primary, bond: C.deep, etf: '#D08FFF' };
     const TYPE_LABELS = { share: 'Акции', bond: 'Облигации', etf: 'ETF' };
 
-    const W = 640; // базовая ширина viewBox; масштабируется равномерно
+    // Базовая ширина viewBox; масштабируется равномерно. На телефоне рендерим
+    // уже (360): при 640, ужатых CSS до ~340px, все подписи мельчают до ~53%.
+    // Пересчитывается перед каждым рендером (см. chartWidth ниже).
+    let W = 640;
+    function chartWidth() {
+        const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
+        W = (vw > 0 && vw < 500) ? 360 : 640;
+    }
 
     // ---------- Форматирование ----------
     const fmt = {
@@ -72,7 +84,13 @@ const Charts = (() => {
     // ---------- SVG-хелперы ----------
     function el(name, attrs = {}, parent = null) {
         const n = document.createElementNS('http://www.w3.org/2000/svg', name);
-        for (const k in attrs) n.setAttribute(k, attrs[k]);
+        for (const k in attrs) {
+            const v = attrs[k];
+            // var()-значения — только в style: презентационные атрибуты SVG
+            // кастомные свойства не понимают (Chromium 57 это уже умеет в CSS)
+            if ((k === 'fill' || k === 'stroke') && typeof v === 'string' && v.indexOf('var(') === 0) n.style[k] = v;
+            else n.setAttribute(k, v);
+        }
         if (parent) parent.appendChild(n);
         return n;
     }
@@ -197,6 +215,7 @@ const Charts = (() => {
     function line(opts) {
         const { series, height = 240 } = opts;
         const xFormat = opts.xFormat || fmt.date;
+        chartWidth();
         const wrap = document.createElement('div'); wrap.className = 'chart-wrap';
         const svg = el('svg', { viewBox: `0 0 ${W} ${height}`, class: 'chart-svg', role: 'img' });
         wrap.appendChild(svg);
@@ -204,7 +223,7 @@ const Charts = (() => {
         const padL = 56, padR = 16, padT = 14, padB = 26;
         const iw = W - padL - padR, ih = height - padT - padB;
         const n = series[0].points.length;
-        const allY = series.flatMap(s => s.points.map(p => p.y));
+        const allY = [].concat.apply([], series.map(s => s.points.map(p => p.y)));
         let yMin = opts.yFromZero ? 0 : Math.min(...allY);
         let yMax = Math.max(...allY, yMin + 1);
         const pad = (yMax - yMin) * 0.08 || yMax * 0.08 || 1;
@@ -239,7 +258,7 @@ const Charts = (() => {
             }
             const line = el('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
             if (s.dash) line.setAttribute('stroke-dasharray', '6 4'); // производная серия (напр., «с учетом инфляции»)
-            dots[si].setAttribute('stroke', s.color); dots[si].setAttribute('stroke-width', 2); dots[si].setAttribute('fill', C.surface);
+            dots[si].setAttribute('stroke', s.color); dots[si].setAttribute('stroke-width', 2); dots[si].style.fill = C.surface;
         });
         // Выборочная прямая подпись: конечная точка серии-истории (emphasize)
         const main = series.find(s => s.emphasize) || series[0];
@@ -326,6 +345,7 @@ const Charts = (() => {
     // groups: [{label, segments:[{value, color, name}]}]
     function bars(opts) {
         const { groups, height = 220 } = opts;
+        chartWidth();
         const wrap = document.createElement('div'); wrap.className = 'chart-wrap';
         const svg = el('svg', { viewBox: `0 0 ${W} ${height}`, class: 'chart-svg', role: 'img' });
         wrap.appendChild(svg);
@@ -372,7 +392,7 @@ const Charts = (() => {
 
         const out = document.createElement('div');
         out.append(wrap);
-        const names = [...new Set(groups.flatMap(g => g.segments.map(s2 => s2.name)))];
+        const names = [...new Set([].concat.apply([], groups.map(g => g.segments.map(s2 => s2.name))))];
         const colorByName = {};
         groups.forEach(g => g.segments.forEach(s2 => { if (s2.value > 0 && !colorByName[s2.name]) colorByName[s2.name] = s2.color; }));
         out.appendChild(legend(names.map(n => ({ label: n, color: colorByName[n] || C.primary }))));
@@ -385,6 +405,7 @@ const Charts = (() => {
     // rows: [{label, sub?, value, valueLabel, badge?:{text, positive}}]
     function hbars(opts) {
         const { rows, height } = opts;
+        chartWidth();
         const rowH = 46, head = 6;
         const h = height || head + rows.length * rowH + 10;
         const wrap = document.createElement('div'); wrap.className = 'chart-wrap';

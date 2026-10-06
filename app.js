@@ -51,7 +51,13 @@ function mergeInvestmentConfig(loaded) {
 
 // ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadFromServer();
+    // Автономный режим (APK): данные только в localStorage, сервера нет.
+    // Веб-режим как раньше: сервер — источник правды, localStorage — кэш.
+    if (window.WALLET_STANDALONE) {
+        loadFromLocalStorage();
+    } else {
+        await loadFromServer();
+    }
     renderCalendar();
     updateBalanceSummary();
     renderTransactionsList();
@@ -64,6 +70,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Сег-переключатели модалок, свотчи цветов, режим «скрыть суммы»
     initSegControls();
     initStealth();
+    initHeaderServiceButtons();
+
+    // Тап по подложке и Escape закрывают модалки (у bottom sheet это ожидаемо)
+    initModalDismiss();
 
     // Дашборд подписан на это событие: конфиг инвестиций и календарь загружены
     document.dispatchEvent(new CustomEvent('wallet:data-loaded'));
@@ -154,6 +164,8 @@ function loadFromLocalStorage() {
         transactions = data.transactions || [];
         categories = data.categories || [];
         occurrences = data.occurrences || [];
+        // Как и в loadFromServer: конфиг инвестиций мержится на дефолт
+        investmentConfig = mergeInvestmentConfig(data.investmentConfig);
         
         // Если категорий нет, инициализируем по умолчанию
         if (categories.length === 0) {
@@ -175,6 +187,8 @@ function saveToLocalStorage() {
 }
 
 async function saveToServer() {
+    // Автономный режим (APK): сервера нет — сохранение только локальное
+    if (window.WALLET_STANDALONE) return true;
     try {
         const response = await fetch('api.php', {
             method: 'POST',
@@ -215,6 +229,8 @@ async function saveToServer() {
 
 // Явное сохранение по кнопке
 function saveDataToServer() {
+    // Автономный режим: кнопки «на сервер» нет, но защита от случайного вызова
+    if (window.WALLET_STANDALONE) { saveData(); return; }
     saveToServer().then(success => {
         if (success) {
             alert('Данные успешно сохранены на сервере');
@@ -227,6 +243,8 @@ function saveDataToServer() {
 // ==================== Data Management ====================
 function saveData() {
     saveToLocalStorage();
+    // Автономный режим: обновляем снапшот для Java (утренние уведомления)
+    if (window.WALLET_STANDALONE && window.WalletBackup) WalletBackup.persistSnapshot();
     saveToServer();
 }
 
@@ -339,6 +357,16 @@ function createDayCell(date, isOtherMonth, isToday = false) {
     const balanceClass = cumulativeBalance >= 0 ? 'positive' : 'negative';
     const dayTransactions = getDayTransactions(date);
 
+    // Компактные суммы дня для мобильной ячейки (десктоп их прячет в CSS)
+    let dayIn = 0, dayOut = 0;
+    dayTransactions.forEach(t => {
+        if (t.type === 'income') dayIn += t.amount; else dayOut += t.amount;
+    });
+    const sumsHtml = (dayIn || dayOut) ? `<div class="day-sums">`
+        + (dayIn ? `<div class="ds-in">+${compactSum(dayIn)}</div>` : '')
+        + (dayOut ? `<div class="ds-out">−${compactSum(dayOut)}</div>` : '')
+        + `</div>` : '';
+
     let transactionsHtml = '';
     dayTransactions.slice(0, 3).forEach(t => {
         const typeClass = t.type === 'income' ? 'income' : 'expense';
@@ -351,11 +379,23 @@ function createDayCell(date, isOtherMonth, isToday = false) {
 
     cell.innerHTML = `
         <div class="day-number">${date.getDate()}</div>
+        ${sumsHtml}
         <div class="day-balance ${balanceClass}">${cumulativeBalance.toLocaleString()} ₽</div>
         <div class="day-transactions">${transactionsHtml}</div>
     `;
 
     return cell;
+}
+
+// Короткая запись суммы для мобильной ячейки календаря: «50 тыс», «1,2 млн».
+// Обычно это Charts.fmt.compactNum; локальный фолбэк — на случай, если app.js
+// используется без charts.js.
+function compactSum(v) {
+    if (window.Charts && Charts.fmt && Charts.fmt.compactNum) return Charts.fmt.compactNum(v);
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн';
+    if (a >= 1e3) return (v / 1e3).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' тыс';
+    return Math.round(v).toLocaleString('ru-RU');
 }
 
 function previousMonth() {
@@ -639,6 +679,374 @@ function getCumulativeBalance(date) {
     return balance;
 }
 
+// ==================== Экран «Баланс по дням» ====================
+// Горизонтальная лента месяцев: SVG-график баланса (getCumulativeBalance) по дням.
+// Листание бесконечное и без перерыва: прошлое (оно конечно — от месяца первой
+// операции) строится заранее целиком, будущее добавляется страницами только
+// append'ом — позиция скролла при этом не меняется и инерция не глохнет.
+// Полная перерисовка редка: лишь когда график выходит за текущую шкалу Y.
+// Будущее раскручивается до 2100 года, слева при упоре — «Начало истории».
+
+const BAL_DAY_W = 14;    // px на один день
+// Страницы-месяцы встык: день 1 в x=0, ширина = дням месяца, без полей и
+// отступов между страницами — тогда день 1 следующего месяца оказывается
+// ровно на один день правее последнего дня предыдущего и линия/заливка
+// читаются как один непрерывный график (разрывов по месяцам нет).
+const BAL_PAD_L = 0;
+const BAL_PAD_R = 0;
+const BAL_TOP = 8;
+const BAL_H = 168;       // высота поля графика
+const BAL_BOTTOM = 18;   // подписи дней
+const BAL_TRIGGER = 160; // запас до края, при котором тянем следующие страницы
+const BAL_PREBUILD = 48; // сколько месяцев прошлого строим заранее за раз
+
+const balanceState = { built: false, dirty: true, months: [], cache: {}, scrollBusy: false };
+
+// Имена месяцев вручную: ICU старых WebView (Chromium 57) для {month:'long',year}
+// даёт родительный падеж («сентября 2026»), заголовку нужен именительный.
+const BAL_MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const BAL_MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+function balMonthKey(y, m) { return y + '-' + ('0' + (m + 1)).slice(-2); }
+function balPrevMonth(y, m) { return m === 0 ? { y: y - 1, m: 11 } : { y: y, m: m - 1 }; }
+function balNextMonth(y, m) { return m === 11 ? { y: y + 1, m: 0 } : { y: y, m: m + 1 }; }
+function balCmp(a, b) { return a.y !== b.y ? a.y - b.y : a.m - b.m; } // <0 — a раньше b
+
+// Месяц самой ранней операции (стартов серии или occurrence) — левый край истории.
+function balFirstDataMonth() {
+    let best = null;
+    const see = (str) => {
+        if (!str) return;
+        const d = parseLocalDate(str);
+        if (!d || isNaN(d.getTime())) return;
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        if (!best || y < best.y || (y === best.y && m < best.m)) best = { y: y, m: m };
+    };
+    transactions.forEach(t => see(t.date));
+    occurrences.forEach(o => see(o.date));
+    return best;
+}
+
+// Точки месяца (день → баланс), кэшируются до смены данных.
+function balMonthPoints(y, m) {
+    const key = balMonthKey(y, m);
+    if (balanceState.cache[key]) return balanceState.cache[key];
+    const days = new Date(y, m + 1, 0).getDate();
+    const pts = [];
+    for (let d = 1; d <= days; d++) {
+        pts.push({ d: d, bal: getCumulativeBalance(new Date(y, m, d)) });
+    }
+    balanceState.cache[key] = pts;
+    return pts;
+}
+
+function balSvgEl(name, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+    if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+}
+
+// Страница-месяц: подпись + SVG (линия, заливка, «сегодня», подписи, гайд).
+// Шкала сумм — не здесь, а в общей оси слева от ленты (balanceAxis).
+function buildBalPage(mo, lo, hi) {
+    const pts = balMonthPoints(mo.y, mo.m);
+    const days = pts.length;
+    const w = BAL_PAD_L + days * BAL_DAY_W + BAL_PAD_R;
+    const h = BAL_TOP + BAL_H + BAL_BOTTOM;
+    const span = (hi - lo) || 1;
+    const yOf = v => BAL_TOP + BAL_H - ((v - lo) / span) * BAL_H;
+    const xOf = i => BAL_PAD_L + i * BAL_DAY_W;
+
+    const page = document.createElement('div');
+    page.className = 'balance-page';
+    page.setAttribute('data-month', balMonthKey(mo.y, mo.m));
+
+    const title = document.createElement('div');
+    title.className = 'balance-page-title';
+    title.textContent = BAL_MONTHS[mo.m] + ' ' + mo.y;
+    page.appendChild(title);
+
+    const svg = balSvgEl('svg', { width: w, height: h, viewBox: '0 0 ' + w + ' ' + h });
+
+    // заливка под линией
+    let d = '';
+    let linePts = '';
+    pts.forEach((p, i) => {
+        const x = xOf(i);
+        const y = yOf(p.bal);
+        d += (i ? ' L' : 'M') + x + ' ' + y;
+        linePts += (i ? ' ' : '') + x + ',' + y;
+    });
+    const baseY = BAL_TOP + BAL_H;
+    d += ' L' + xOf(days - 1) + ' ' + baseY + ' L' + xOf(0) + ' ' + baseY + ' Z';
+    const area = balSvgEl('path', { d: d });
+    area.style.fill = 'rgba(92, 167, 255, 0.12)';
+    svg.appendChild(area);
+
+    const line = balSvgEl('polyline', { points: linePts, fill: 'none', 'stroke-width': 2 });
+    line.style.stroke = 'var(--tui-blue)';
+    svg.appendChild(line);
+
+    // нулевая линия, если баланс меняет знак
+    if (lo < 0 && hi > 0) {
+        const zero = balSvgEl('line', { x1: BAL_PAD_L, x2: w - BAL_PAD_R, y1: yOf(0), y2: yOf(0), 'stroke-dasharray': '3 3', 'stroke-width': 1 });
+        zero.style.stroke = 'var(--tui-border)';
+        svg.appendChild(zero);
+    }
+
+    // «сегодня» — жёлтая линия и точка
+    const today = new Date();
+    if (mo.y === today.getFullYear() && mo.m === today.getMonth()) {
+        const ti = Math.min(today.getDate() - 1, days - 1);
+        svg.appendChild(balSvgEl('line', {
+            x1: xOf(ti), x2: xOf(ti), y1: BAL_TOP, y2: baseY,
+            stroke: '#FFDD2D', 'stroke-width': 2, 'stroke-dasharray': '3 3'
+        }));
+        svg.appendChild(balSvgEl('circle', {
+            cx: xOf(ti), cy: yOf(pts[ti].bal), r: 4,
+            fill: '#FFDD2D', stroke: '#333333', 'stroke-width': 1.5
+        }));
+    }
+
+    // подписи дней (1, 5, 10, …); минимум 4px, чтобы «1» не резалась о край страницы
+    for (let day = 1; day <= days; day += (day === 1 ? 4 : 5)) {
+        const t = balSvgEl('text', { x: Math.max(4, xOf(day - 1)), y: h - 4, 'text-anchor': 'middle', 'font-size': 9 });
+        t.style.fill = 'var(--tui-text-3)';
+        t.textContent = day;
+        svg.appendChild(t);
+    }
+
+    // гайд и точка выбора (появляются при наведении/тапе)
+    const guide = balSvgEl('line', { y1: BAL_TOP, y2: baseY, 'stroke-width': 1, 'stroke-dasharray': '4 3' });
+    guide.style.stroke = 'var(--tui-text-3)';
+    guide.style.display = 'none';
+    const dot = balSvgEl('circle', { r: 4, 'stroke-width': 1.5 });
+    dot.style.fill = 'var(--tui-blue)';
+    dot.style.stroke = 'var(--tui-surface)';
+    dot.style.display = 'none';
+    svg.appendChild(guide);
+    svg.appendChild(dot);
+
+    const pick = e => {
+        const rect = svg.getBoundingClientRect();
+        let i = Math.round((e.clientX - rect.left - BAL_PAD_L) / BAL_DAY_W);
+        if (i < 0) i = 0;
+        if (i > days - 1) i = days - 1;
+        return i;
+    };
+    const show = i => {
+        const px = xOf(i);
+        guide.setAttribute('x1', px);
+        guide.setAttribute('x2', px);
+        guide.style.display = '';
+        dot.setAttribute('cx', px);
+        dot.setAttribute('cy', yOf(pts[i].bal));
+        dot.style.display = '';
+        balUpdateReadout(new Date(mo.y, mo.m, pts[i].d), pts[i].bal);
+    };
+    svg.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') show(pick(e)); });
+    svg.addEventListener('click', e => {
+        const i = pick(e);
+        show(i);
+        openDayModal(new Date(mo.y, mo.m, pts[i].d));
+    });
+
+    page.appendChild(svg);
+    return page;
+}
+
+function balUpdateReadout(date, bal) {
+    const el = document.getElementById('balanceReadout');
+    if (!el) return;
+    const now = new Date();
+    const isToday = date.getFullYear() === now.getFullYear()
+        && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+    const label = isToday ? 'Баланс на сегодня'
+        : 'Баланс на ' + date.getDate() + ' ' + BAL_MONTHS_GEN[date.getMonth()] + ':';
+    el.innerHTML = label + '<strong>' + Math.round(bal).toLocaleString('ru-RU') + ' ₽</strong>';
+}
+
+// Перерисовать ленту по текущему окну месяцев; единая Y-шкала по всем страницам.
+function renderBalanceWindow() {
+    const strip = document.getElementById('balanceStrip');
+    strip.innerHTML = '';
+    let lo = Infinity;
+    let hi = -Infinity;
+    balanceState.months.forEach(mo => balMonthPoints(mo.y, mo.m).forEach(p => {
+        if (p.bal < lo) lo = p.bal;
+        if (p.bal > hi) hi = p.bal;
+    }));
+    if (lo === Infinity) { lo = 0; hi = 0; }
+    if (hi - lo < 1) hi = lo + 1;
+    const pad = (hi - lo) * 0.08 || 1;
+    lo -= pad;
+    hi += pad;
+
+    const fl = balanceState.floor;
+    const f0 = balanceState.months[0];
+    if (fl && f0.y === fl.y && f0.m === fl.m) {
+        const edge = document.createElement('div');
+        edge.className = 'balance-start';
+        edge.textContent = 'Начало истории';
+        strip.appendChild(edge);
+    }
+    balanceState.months.forEach(mo => strip.appendChild(buildBalPage(mo, lo, hi)));
+    balanceState.lo = lo; // текущая шкала: fast-path добавления сверяется с ней
+    balanceState.hi = hi;
+
+    // Ось сумм слева от ленты: 5 делений по общей шкале окна. Вертикально
+    // совмещаем с полем графика страницы (заголовок месяца + верхний отступ).
+    const axis = document.getElementById('balanceAxis');
+    if (axis) {
+        axis.innerHTML = '';
+        const firstTitle = strip.querySelector('.balance-page .balance-page-title');
+        const titleH = (firstTitle ? firstTitle.offsetHeight : 17) + 6; // + margin
+        for (let i = 0; i <= 4; i++) {
+            const v = hi - (hi - lo) * i / 4;
+            const t = document.createElement('span');
+            t.textContent = compactSum(v);
+            t.style.top = (titleH + BAL_TOP + (BAL_H * i) / 4) + 'px';
+            axis.appendChild(t);
+        }
+    }
+}
+
+function balScrollToToday() {
+    const strip = document.getElementById('balanceStrip');
+    const t = new Date();
+    const el = strip.querySelector('.balance-page[data-month="' + balMonthKey(t.getFullYear(), t.getMonth()) + '"]');
+    if (!el) return;
+    const dayX = BAL_PAD_L + (t.getDate() - 1) * BAL_DAY_W;
+    strip.scrollLeft = Math.max(0, el.offsetLeft + dayX - strip.clientWidth / 2);
+}
+
+// Бесконечность без перерыва. Будущее: добавляем страницы только append'ом —
+// существующий DOM не трогаем, scrollLeft не меняем, инерция живёт. Полная
+// перерисовка — единственный редкий случай: график вышел за шкалу Y. Прошлое
+// уже построено заранее от месяца первой операции; глубже упреждающей
+// глубины (очень длинная история) — prepend с компенсацией, там флинг и
+// заглохнет, но это крайний случай.
+function onBalStripScroll() {
+    if (balanceState.scrollBusy) return;
+    balanceState.scrollBusy = true;
+    setTimeout(() => { balanceState.scrollBusy = false; }, 30);
+
+    const strip = document.getElementById('balanceStrip');
+    const months = balanceState.months;
+
+    // --- будущее: append-only ---
+    let guard = 3; // страниц за один проход — защита от вечного цикла
+    while (guard-- > 0 && strip.scrollWidth - strip.scrollLeft - strip.clientWidth < BAL_TRIGGER) {
+        const l = months[months.length - 1];
+        if (l.y >= 2100) break;
+        const nm = balNextMonth(l.y, l.m);
+        const pts = balMonthPoints(nm.y, nm.m);
+        let lo2 = balanceState.lo, hi2 = balanceState.hi;
+        for (let i = 0; i < pts.length; i++) {
+            if (pts[i].bal < lo2) lo2 = pts[i].bal;
+            if (pts[i].bal > hi2) hi2 = pts[i].bal;
+        }
+        months.push(nm);
+        if (lo2 < balanceState.lo || hi2 > balanceState.hi) {
+            renderBalanceWindow(); // редкий случай: новая шкала + всё заново
+        } else {
+            strip.appendChild(buildBalPage(nm, balanceState.lo, balanceState.hi));
+        }
+    }
+
+    // --- прошлое: обычно уже построено, здесь только очень глубокая история ---
+    guard = 2;
+    while (guard-- > 0 && strip.scrollLeft < BAL_TRIGGER) {
+        const fl = balanceState.floor;
+        const f = months[0];
+        if (fl && f.y === fl.y && f.m === fl.m) break;
+        const wasEdge = !!strip.querySelector('.balance-start');
+        const pm = balPrevMonth(f.y, f.m);
+        const oldLeft = strip.scrollLeft;
+        const probe = buildBalPage(pm, balanceState.lo, balanceState.hi);
+        months.unshift(pm);
+        strip.insertBefore(probe, strip.firstChild);
+        const edge = strip.querySelector('.balance-start');
+        strip.scrollLeft = oldLeft + probe.offsetWidth
+            + (edge && !wasEdge ? edge.offsetWidth : 0);
+    }
+}
+
+function initBalanceView() {
+    const strip = document.getElementById('balanceStrip');
+    if (!strip.__balInit) {
+        strip.__balInit = true;
+        strip.addEventListener('scroll', onBalStripScroll);
+        // колесо мыши листает ленту по горизонтали (полосы прокрутки под
+        // графиком нет — только свайп и колесо); тачпад с горизонтальным
+        // скроллом уже попадает в deltaX и не перенаправляется
+        strip.addEventListener('wheel', e => {
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                strip.scrollLeft += e.deltaY;
+                e.preventDefault();
+            }
+        }, { passive: false });
+        const todayBtn = document.getElementById('balanceTodayBtn');
+        if (todayBtn) todayBtn.addEventListener('click', balScrollToToday);
+    }
+
+    // Прошлое строим заранее целиком — от месяца первой операции (глубже
+    // BAL_PREBUILD месяцев не тянем: очень длинные истории добираются
+    // prepend'ом уже при прокрутке). Будущее — cur+6, дальше append'ом.
+    // До первой операции баланс = 0, листать там нечего.
+    const now = new Date();
+    const cur = { y: now.getFullYear(), m: now.getMonth() };
+    let back = cur;
+    for (let i = 0; i < 3; i++) back = balPrevMonth(back.y, back.m);
+    const fm = balFirstDataMonth();
+    let start = back;
+    if (fm && balCmp(fm, back) > 0 && balCmp(fm, cur) <= 0) start = fm;
+    // левый край листания: месяц первой операции; без данных — стоп на старте
+    balanceState.floor = fm && balCmp(fm, start) < 0 ? fm : start;
+    balanceState.months = [start];
+    let q = start;
+    const total = 1 + (cur.y * 12 + cur.m - start.y * 12 - start.m) + 6;
+    for (let j = 1; j < total && j <= BAL_PREBUILD + 6; j++) {
+        q = balNextMonth(q.y, q.m);
+        balanceState.months.push(q);
+    }
+    renderBalanceWindow();
+    balUpdateReadout(now, getCumulativeBalance(now));
+    balScrollToToday();
+}
+
+// Данные изменились — точки и кэш устарели, при следующем входе строим заново.
+// Если пользователь стоит на «Балансе по дням» (например, рефреш страницы:
+// вид восстановился из localStorage раньше, чем пришли данные), перестраиваем
+// ленту сразу — иначе график стоит нулевым до повторного захода на экран.
+function markBalanceDirty() {
+    balanceState.dirty = true;
+    balanceState.cache = {};
+}
+function onBalanceDataChanged() {
+    const wasBuilt = balanceState.built;
+    markBalanceDirty();
+    if (wasBuilt && document.body.classList.contains('balance-mode')) {
+        window.__walletShowBalance();
+    }
+}
+document.addEventListener('wallet:data-changed', onBalanceDataChanged);
+document.addEventListener('wallet:data-loaded', onBalanceDataChanged);
+
+// Хук для setView (dashboard.js): первый вход строит экран, повторные — скролл к «сегодня».
+window.__walletShowBalance = function () {
+    if (balanceState.dirty || !balanceState.built) {
+        initBalanceView();
+        balanceState.built = true;
+        balanceState.dirty = false;
+    } else {
+        balScrollToToday();
+    }
+};
+
 function getNextOccurrenceDate(transaction, afterDate) {
     const startDate = parseLocalDate(transaction.date);
     const after = parseLocalDate(afterDate);
@@ -768,7 +1176,6 @@ function getMonthBalance() {
 // ==================== Balance Summary ====================
 function updateBalanceSummary() {
     const { income, expense, balance } = getMonthBalance();
-    const todayBalance = getCumulativeBalance(new Date());
 
     document.getElementById('monthIncome').textContent = `+${income.toLocaleString()} ₽`;
     document.getElementById('monthExpense').textContent = `-${expense.toLocaleString()} ₽`;
@@ -776,10 +1183,6 @@ function updateBalanceSummary() {
     const balanceEl = document.getElementById('monthBalance');
     balanceEl.textContent = `${balance >= 0 ? '+' : ''}${balance.toLocaleString()} ₽`;
     balanceEl.className = `balance-value ${balance >= 0 ? 'income' : 'expense'}`;
-
-    // Update header balance - баланс на текущий день
-    const headerBalanceEl = document.getElementById('headerBalance');
-    headerBalanceEl.textContent = `${todayBalance.toLocaleString()} ₽`;
 }
 
 // ==================== Transactions List ====================
@@ -830,12 +1233,13 @@ function renderTransactionsList() {
 
     container.innerHTML = sorted.map(t => {
         const amountClass = t.type === 'income' ? 'income' : 'expense';
-        const sign = t.type === 'income' ? '+' : '-';
+        const sign = t.type === 'income' ? '+' : '−';
         const category = getCategoryById(t.category);
-        const categoryBadge = category
-            ? `<span class="transaction-category-badge" style="background: ${category.color}20; color: ${category.color}; border: 1px solid ${category.color}">${escapeHtml(category.name)}</span>`
-            : '';
-        
+        const catName = category ? category.name : (t.category || '');
+        const color = category ? category.color : '';
+        const avatarStyle = color ? ` style="background: ${color}26; color: ${color};"` : '';
+        const letter = escapeHtml((catName || t.name || '?').trim().charAt(0).toUpperCase());
+
         const dateStr = t.displayDate.toLocaleDateString('ru-RU', {
             day: 'numeric',
             month: 'short'
@@ -843,11 +1247,10 @@ function renderTransactionsList() {
 
         return `
             <div class="transaction-item">
+                <div class="tx-avatar"${avatarStyle}>${letter}</div>
                 <div class="transaction-info">
-                    <div class="transaction-name">${escapeHtml(t.name)} ${categoryBadge}</div>
-                    <div class="transaction-meta">
-                        📅 ${dateStr}
-                    </div>
+                    <div class="transaction-name">${escapeHtml(t.name)}</div>
+                    <div class="transaction-meta">${catName ? escapeHtml(catName) + ' · ' : ''}📅 ${dateStr}</div>
                 </div>
                 <div class="transaction-amount ${amountClass}">
                     ${sign}${Math.abs(t.amount).toLocaleString()} ₽
@@ -928,6 +1331,39 @@ function initStealth() {
     });
 }
 
+// Шапка календаря: 🏷 категории и ↩️ отмена (только на этом экране — CSS прячет
+// в dashboard/balance-режимах; листенеры, а не onclick — jsdom не исполняет инлайн)
+function initHeaderServiceButtons() {
+    const catBtn = document.getElementById('categoriesBtn');
+    if (catBtn) catBtn.addEventListener('click', () => openCategoriesModal());
+    const undoBtn = document.getElementById('undoBtn');
+    if (undoBtn) undoBtn.addEventListener('click', () => undoLastOperation());
+}
+
+// Закрытие модалок приложения тапом по подложке и Escape
+// (по образцу WalletSettings; для мобильных bottom sheet — обязательный жест)
+function initModalDismiss() {
+    const closers = {
+        transactionModal: closeTransactionModal,
+        dayModal: closeDayModal,
+        categoriesModal: closeCategoriesModal
+    };
+    Object.keys(closers).forEach(id => {
+        const overlay = document.getElementById(id);
+        if (!overlay) return;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closers[id]();
+        });
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        Object.keys(closers).forEach(id => {
+            const overlay = document.getElementById(id);
+            if (overlay && overlay.classList.contains('active')) closers[id]();
+        });
+    });
+}
+
 function openTransactionModal(date = null) {
     document.getElementById('transactionForm').reset();
     document.getElementById('transactionId').value = '';
@@ -978,16 +1414,18 @@ function openDayModal(date) {
         content += '<div class="transactions-list">';
         dayTransactions.forEach(t => {
             const amountClass = t.type === 'income' ? 'income' : 'expense';
-            const sign = t.type === 'income' ? '+' : '-';
+            const sign = t.type === 'income' ? '+' : '−';
             const category = getCategoryById(t.category);
-            const categoryBadge = category
-                ? `<span class="cat-badge" style="background: ${category.color}20; color: ${category.color};">${escapeHtml(category.name)}</span>`
-                : '';
+            const catName = category ? category.name : (t.category || '');
+            const color = category ? category.color : '';
+            const avatarStyle = color ? ` style="background: ${color}26; color: ${color};"` : '';
+            const letter = escapeHtml((catName || t.name || '?').trim().charAt(0).toUpperCase());
             content += `
                 <div class="transaction-item">
+                    <div class="tx-avatar"${avatarStyle}>${letter}</div>
                     <div class="transaction-info">
-                        <div class="transaction-name">${escapeHtml(t.name)} ${categoryBadge}</div>
-                        <div class="transaction-meta">${t.note ? escapeHtml(t.note) : ''}</div>
+                        <div class="transaction-name">${escapeHtml(t.name)}</div>
+                        <div class="transaction-meta">${catName ? escapeHtml(catName) + (t.note ? ' · ' : '') : ''}${t.note ? escapeHtml(t.note) : ''}</div>
                     </div>
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <div class="transaction-amount ${amountClass}">
@@ -1197,8 +1635,8 @@ function updateScopeInfo() {
 function formatDDMMYYYY(dateStr) {
     if (!dateStr) return '';
     const date = new Date(dateStr);
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = ('0' + date.getDate()).slice(-2);
+    const month = ('0' + (date.getMonth() + 1)).slice(-2);
     const year = date.getFullYear();
     return `${day}-${month}-${year}`;
 }
@@ -1266,8 +1704,8 @@ function formatDate(date) {
     if (!date) return '';
     const d = new Date(date);
     const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const month = ('0' + (d.getMonth() + 1)).slice(-2);
+    const day = ('0' + d.getDate()).slice(-2);
     return `${year}-${month}-${day}`;
 }
 
@@ -1286,7 +1724,8 @@ function escapeHtml(text) {
 
 function updateCategorySelect() {
     const select = document.getElementById('transactionCategory');
-    const currentType = document.getElementById('transactionType')?.value || 'expense';
+    const typeSelect = document.getElementById('transactionType');
+    const currentType = (typeSelect ? typeSelect.value : '') || 'expense';
     
     // Map 'expense'/'income' to 'exp'/'inc'
     const typeMap = { 'expense': 'exp', 'income': 'inc' };
@@ -1443,5 +1882,7 @@ function deleteCategory(id) {
 }
 
 function getCategoryById(id) {
-    return categories.find(c => c.id === id);
+    // Основной ключ — id; фолбэк по имени: старые/импортированные транзакции
+    // хранят в category имя, а не id
+    return categories.find(c => c.id === id) || categories.find(c => c.name === id);
 }

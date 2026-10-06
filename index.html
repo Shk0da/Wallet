@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Финансовый календарь</title>
-    <link rel="stylesheet" href="https://cdn.tbank.ru/core/design-tokens/v1/web/fonts/2.0.0/fonts.css">
+    <title>Шакал</title>
+    <link rel="stylesheet" href="fonts/fonts.css">
     <style>
         /* ===== Дизайн-токены Taiga UI (taiga-ui.tcsbank.ru) ===== */
         :root {
             --tui-yellow: #FFDD2D;
             --tui-on-yellow: #333333;
             --tui-blue: #428BF9;
-            --tui-green: #00B92D;
+            --tui-green: #40BF5F;
             --tui-red: #F52222;
             --tui-orange: #FFB74C;
             --tui-pink: #FF7A91;
@@ -19,23 +19,26 @@
             --tui-sea: #2ABBF4;
             --tui-turquoise: #0BD5C1;
             --tui-warning: #F59200;
-            --tui-text: #000000CC;
-            --tui-text-2: #0000008A;
-            --tui-text-3: #00000066;
+            --tui-text: #333333;
+            --tui-text-2: #61666D;
+            --tui-text-3: #9299A2;
             --tui-bg: #F6F7F8;
             --tui-surface: #FFFFFF;
             --tui-border: #E1E3E4;
             --tui-border-soft: #EDEFF2;
             --tui-focus: rgba(148, 155, 165, 0.44);
             --tui-gray: #333333;
+            --tui-stripe: #FAFBFD; /* зебра строк в таблицах графиков */
             --r-xs: 4px;
             --r-s: 6px;
             --r-m: 8px;
-            --r-l: 12px;
+            --r-l: 16px;
+            --nav-h: 56px;
             --r-xl: 24px;
             --sh-small: 0 5px 20px rgba(0, 0, 0, 0.1);
             --sh-medium: 0 6px 34px rgba(0, 0, 0, 0.12);
             --sh-popup: 0 8px 28px rgba(0, 0, 0, 0.16);
+            --tui-surface-glass: rgba(255, 255, 255, 0.92); /* липкая навигация со «стеклом» */
         }
 
         * {
@@ -81,24 +84,9 @@
         header h1 {
             font-family: 'tuiHeading', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-size: 1.8rem;
+            flex: 1 1 auto; min-width: 0; /* занимает место между ☰ и кнопками */
         }
-
-        .header-balance {
-            background: var(--tui-bg);
-            padding: 10px 20px;
-            border-radius: var(--r-m);
-            text-align: center;
-        }
-
-        .header-balance-label {
-            font-size: 0.85rem;
-            color: var(--tui-text-2);
-        }
-
-        .header-balance-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
+        #menuBtn { flex: 0 0 auto; }
 
         .header-actions {
             display: flex;
@@ -178,19 +166,6 @@
                 width: 100%;
                 text-align: center;
                 margin-bottom: 10px;
-            }
-
-            .header-balance {
-                width: 100%;
-                margin-bottom: 15px;
-            }
-
-            .header-balance-label {
-                font-size: 0.75rem;
-            }
-
-            .header-balance-value {
-                font-size: 1.8rem;
             }
 
             .header-actions {
@@ -348,7 +323,7 @@
         }
 
         .day-transaction.income {
-            background: rgba(0, 185, 45, 0.12);
+            background: rgba(64, 191, 95, 0.12);
             color: var(--tui-text);
         }
 
@@ -390,7 +365,7 @@
         }
 
         .balance-item.income {
-            background: rgba(0, 185, 45, 0.12);
+            background: rgba(64, 191, 95, 0.12);
         }
 
         .balance-item.expense {
@@ -525,6 +500,36 @@
         .transaction-actions button:hover {
             opacity: 1;
         }
+
+        /* ===== Автономный режим (APK): прятать серверное, показывать локальное ===== */
+        body.standalone .server-only { display: none !important; }
+        .standalone-only { display: none; }
+        body.standalone .standalone-only { display: block; }
+        body.standalone label.standalone-only { display: flex; }
+
+        /* ===== Модалка настроек ===== */
+        .settings-section { padding: 14px 0; border-top: 1px solid var(--tui-border-soft); }
+        .settings-section:first-of-type { border-top: none; }
+        .settings-section h3 { margin: 0 0 10px; font-size: 1rem; }
+        .settings-hint { font-size: 12px; color: var(--tui-text-3); margin-top: 8px; line-height: 1.45; }
+        /* «?» у полей: кнопка-кружок в label, клик раскрывает подсказку под полем */
+        .hint-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 16px; height: 16px; margin-left: 6px; padding: 0;
+            border-radius: 50%; border: 1px solid var(--tui-border);
+            background: var(--tui-surface); color: var(--tui-text-3);
+            font-size: 10px; line-height: 1; font-family: inherit;
+            vertical-align: 1px; cursor: pointer;
+        }
+        .hint-btn:hover, .hint-btn[aria-expanded="true"] { color: var(--tui-blue); border-color: var(--tui-blue); }
+        .hint-box {
+            font-size: 12px; color: var(--tui-text-2); line-height: 1.5;
+            background: var(--tui-bg); border-radius: var(--r-s);
+            padding: 8px 10px; margin-top: 6px;
+        }
+        .check-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; cursor: pointer; user-select: none; }
+        .check-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--tui-yellow); }
+        .settings-about { color: var(--tui-text-2); font-size: 0.9rem; }
 
         .modal-overlay {
             display: none;
@@ -718,7 +723,7 @@
             cursor: pointer; user-select: none;
             background: var(--tui-border-soft); color: var(--tui-text-2);
         }
-        .growth-plate.pos { background: rgba(0,185,45,.12); color: var(--tui-green); }
+        .growth-plate.pos { background: rgba(64,191,95,.12); color: var(--tui-green); }
         .growth-plate.neg { background: rgba(245,34,34,.10); color: var(--tui-red); }
         .growth-plate.muted { color: var(--tui-text-3); }
         .growth-plate:hover { box-shadow: inset 0 0 0 999px rgba(0,0,0,.06); }
@@ -778,12 +783,26 @@
         .goal-progress-fill.done { background: var(--tui-green); }
         .goal-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--tui-text-2); }
         .goal-verdict { font-size: 13px; line-height: 1.5; padding: 10px 12px; border-radius: var(--r-m); background: var(--tui-bg); }
-        .goal-verdict.ok { background: rgba(0, 185, 45, 0.12); color: #0b7a26; font-weight: 600; }
+        .goal-verdict.ok { background: rgba(64, 191, 95, 0.12); color: #0b7a26; font-weight: 600; }
         .goal-verdict.warn { background: rgba(245, 146, 0, 0.12); color: #8a5600; }
         .goal-cta { width: 100%; text-align: center; padding: 12px; border: 1.5px dashed var(--tui-border); background: none; border-radius: var(--r-l); color: var(--tui-text); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
         .goal-cta:hover { border-color: var(--tui-blue); color: var(--tui-blue); background: rgba(66, 139, 249, 0.06); }
         .goal-form { display: flex; flex-direction: column; gap: 12px; }
         .goal-form .form-group { margin-bottom: 0; }
+        /* Форма цели строится без .form-group — стилируем «голые» поля напрямую */
+        .goal-form > label {
+            font-weight: 500; font-size: 0.9rem; color: var(--tui-text-2);
+        }
+        .goal-form > input, .goal-form > select {
+            width: 100%; padding: 10px 12px;
+            border: 1px solid var(--tui-border); border-radius: var(--r-m);
+            font-size: 14px; font-family: inherit;
+            color: var(--tui-text); background: var(--tui-surface);
+        }
+        .goal-form > input:focus, .goal-form > select:focus {
+            outline: none; border-color: var(--tui-blue);
+            box-shadow: 0 0 0 3px rgba(66, 139, 249, 0.15);
+        }
         .goal-edit-btn { border: none; background: none; color: var(--tui-blue); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 4px 8px; border-radius: var(--r-s); }
         .goal-edit-btn:hover { background: rgba(66, 139, 249, 0.1); }
 
@@ -810,11 +829,9 @@
         .goal-reset-btn { border: none; background: none; color: var(--tui-text-3); cursor: pointer; font: inherit; font-size: 12.5px; padding: 4px; text-decoration: underline; }
         .goal-reset-btn:hover { color: var(--tui-red); }
         @media (max-width: 768px) {
-            .ht-table .hide-sm { display: none; }
+            /* Колонки активов больше не прячем: таблица уезжает в горизонтальный
+               скролл (.ht-scroll), прятать клетки без заголовков — рассинхрон */
             .ht-name { max-width: 140px; }
-        }
-        @media (max-width: 480px) {
-            .ht-table .hide-xs { display: none; }
         }
 
         /* --- Формы: крупные поля, сегменты, чипы цветов, футер модалки --- */
@@ -844,7 +861,7 @@
         .cat-actions { display: flex; gap: 4px; flex: none; }
         .cat-actions button { border: none; background: none; cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: var(--r-s); }
         .cat-actions button:hover { background: rgba(0, 0, 0, 0.06); }
-        .dm-balance-card { margin-bottom: 20px; padding: 15px; border-radius: var(--r-l); background: rgba(0, 185, 45, 0.08); }
+        .dm-balance-card { margin-bottom: 20px; padding: 15px; border-radius: var(--r-l); background: rgba(64, 191, 95, 0.08); }
         .dm-balance-card.neg { background: rgba(245, 34, 34, 0.08); }
         .dm-balance-label { font-size: 13px; color: var(--tui-text-2); }
         .dm-balance-value { font-size: 24px; font-weight: 700; font-family: 'tuiHeading', -apple-system, sans-serif; color: var(--tui-green); }
@@ -853,11 +870,11 @@
         .cat-badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin-left: 6px; vertical-align: 1px; }
 
         /* --- Скрыть суммы (stealth): размываем деньги, каркас остаётся --- */
-        body.stealth .header-balance-value, body.stealth .balance-value, body.stealth .transaction-amount,
+        body.stealth .balance-value, body.stealth .transaction-amount,
         body.stealth .day-transaction, body.stealth .dm-balance-value,
         body.stealth .kpi-value, body.stealth .kpi-sub, body.stealth .fc-stat strong, body.stealth .fc-stat .kpi-sub,
         body.stealth .acc-value, body.stealth .acc-cash, body.stealth .pay-amount, body.stealth .goal-target,
-        body.stealth .day-balance, body.stealth .chart-table td, body.stealth .ht-table td, body.stealth .growth-plate,
+        body.stealth .day-balance, body.stealth .day-sums, body.stealth .chart-table td, body.stealth .ht-table td, body.stealth .growth-plate,
         body.stealth .chart-svg text, body.stealth .chart-legend { filter: blur(7px); }
         .btn-icon { padding: 8px 10px; }
         .btn-icon.active { background: var(--tui-yellow); color: var(--tui-on-yellow); }
@@ -894,6 +911,10 @@
         }
         .chart-table td { padding: 6px 8px; border-bottom: 1px solid var(--tui-bg); }
         .chart-table tr:last-child td { border-bottom: none; }
+        /* таблицы в широких карточках: горизонтальный скролл вместо сжатия колонок */
+        .chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .chart-scroll .chart-table th, .chart-scroll .chart-table td { white-space: nowrap; }
+        .fc-table-note { font-size: 11px; color: var(--tui-text-3); margin-top: 6px; }
         .chart-table th:not(:first-child), .chart-table td:not(:first-child) {
             text-align: right; font-variant-numeric: tabular-nums;
         }
@@ -909,7 +930,7 @@
         .acc-cash { font-size: 11.5px; color: var(--tui-text-2); margin-top: 3px; }
 
         /* --- Прогноз --- */
-        .forecast-card { margin-top: 18px; display: flex; flex-direction: column; gap: 16px; }
+        .forecast-card { display: flex; flex-direction: column; gap: 16px; }
         .fc-effective { font-size: 14px; color: var(--tui-text); }
         .fc-default-note { color: #b26a00; font-size: 12px; }
         .fc-controls { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; align-items: end; }
@@ -925,7 +946,7 @@
         .fc-yields .fc-control { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
         .fc-yields input[type="number"] {
             width: 96px; padding: 7px 8px; border: 1px solid var(--tui-border); border-radius: var(--r-m);
-            font-size: 13px; font-family: inherit; color: var(--tui-text);
+            font-size: 13px; font-family: inherit; color: var(--tui-text); background: var(--tui-surface);
         }
         .fc-horizons { display: flex; gap: 8px; }
         .fc-horizons button {
@@ -960,11 +981,15 @@
             .view-nav {
                 position: fixed; left: 0; right: 0; bottom: 0; width: 100%;
                 margin: 0; border-radius: 16px 16px 0 0; justify-content: space-around;
+                padding: 8px 10px 12px;
                 padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
                 z-index: 50; box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.12);
             }
             .view-btn { flex: 1; padding: 11px 8px; font-size: 14.5px; }
-            body { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+            /* панель поднята маржой на 14px — контент и тост очищают её верх (14+72) */
+            body { padding-bottom: 86px; }
+            body { padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+            .toast { bottom: 104px; }
         }
 
         /* ===== Полировка (добавлено; перекрывает только правила дашборда выше) ===== */
@@ -980,10 +1005,10 @@
         .view-nav {
             position: sticky; top: 14px; z-index: 40;
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            background: rgba(255, 255, 255, 0.92);
+            background: var(--tui-surface-glass);
         }
         @media (max-width: 768px) {
-            .view-nav { background: rgba(255, 255, 255, 0.88); top: auto; }
+            .view-nav { top: auto; }
         }
 
         /* Появление вида при переключении */
@@ -994,10 +1019,13 @@
             to   { opacity: 1; transform: none; }
         }
 
-        /* Шапка в режиме портфеля: прячем календарные элементы (stealth остаётся) */
-        body.dashboard-mode .header-balance,
+        /* Кнопки шапки — по экранам: синхронизация — только в «Портфеле»,
+           категории/отмена — только в «Календаре» (сохранение — автоматическое) */
+        body:not(.dashboard-mode) .header-actions #syncBtn { display: none; }
         body.dashboard-mode .header-actions #categoriesBtn,
-        body.dashboard-mode .header-actions #undoBtn { display: none; }
+        body.dashboard-mode .header-actions #undoBtn,
+        body.balance-mode .header-actions #categoriesBtn,
+        body.balance-mode .header-actions #undoBtn { display: none; }
 
         /* Компактные кнопки в шапке (как топбар snowball) */
         .header-actions .btn { padding: 8px 14px; font-size: 13px; }
@@ -1039,7 +1067,7 @@
         #syncBtn { display: inline-flex; align-items: center; gap: 8px; }
 
         /* Таблицы графиков: лёгкая зебра */
-        .chart-table tbody tr:nth-child(even) td { background: #fafbfd; }
+        .chart-table tbody tr:nth-child(even) td { background: var(--tui-stripe); }
 
         /* Прогноз: главный стат выделен жёлтым (тексты — чёрные), на мобиле чипы горизонтов на всю ширину */
         .fc-stat.hl {
@@ -1103,29 +1131,355 @@
         @media (prefers-reduced-motion: reduce) {
             .sync-ico.spin, .sync-progress-fill.live,
             body.dashboard-mode #dashboardView, body:not(.dashboard-mode) .main-content,
-            .broker-chip.running .chip-dot, .login-card { animation: none !important; }
+            .broker-chip.running .chip-dot, .login-card,
+            .modal-overlay.active .modal { animation: none !important; }
+        }
+    </style>
+    <style id="tb-mobile">
+        /* ===== Мобильный слой (Т-Банк): всё для <=768px живёт здесь =====
+           Базовые правила ниже — каркас новых элементов (десктоп-нейтрально);
+           остальное — @media (max-width: 768px) и мелкие <=480px. Этаж
+           WebView Chromium 57: без aspect-ratio/:has/inset, env() — только
+           после обычной строки-фолбэка. */
+
+        /* Компактные суммы дня в ячейке календаря (мобильная альтернатива
+           .day-balance + чипам; на десктопе скрыты) */
+        .day-sums { display: none; }
+        .ds-in, .ds-out {
+            font-size: 10px; line-height: 1.35; white-space: nowrap;
+            max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+            font-variant-numeric: tabular-nums;
+        }
+        .ds-in { color: var(--tui-green); }
+        .ds-out { color: var(--tui-red); }
+
+        /* Строка действий календаря (был inline-style div) — на десктопе
+           выглядит как раньше */
+        .calendar-actions { display: flex; gap: 10px; align-items: center; }
+        .calendar-actions .btn-today { padding: 8px 15px; }
+
+        /* Ячейка-список в стиле Т-Банка: круглая иконка-аватар + тексты + сумма */
+        .tx-avatar {
+            width: 40px; height: 40px; border-radius: 50%; flex: none;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; font-weight: 600;
+            background: var(--tui-bg); color: var(--tui-text-2);
+        }
+
+        /* Подписи кнопок шапки: на десктопе текст виден, на мобиле — иконки */
+        .btn-label { display: inline; }
+
+        @media (max-width: 768px) {
+            /* --- Каркас экрана: фоновые поля, без двойных паддингов --- */
+            body { -webkit-tap-highlight-color: transparent; }
+            .container { padding: 12px 12px 0; }
+            .main-content { gap: 12px; }
+
+            /* --- Шапка: sticky-топбар с иконками + герой-баланс ниже --- */
+            header {
+                position: sticky; top: 0; z-index: 45;
+                padding: 8px 12px;
+                margin: 0 -12px 12px !important;
+                width: auto !important; max-width: none !important;
+                margin-left: -12px !important;
+                border-radius: 0; border-bottom: 1px solid var(--tui-border-soft);
+                box-shadow: none; gap: 6px;
+            }
+            header h1 {
+                order: 1; flex: 1; min-width: 0;
+                font-size: 16px; text-align: left; margin-bottom: 0;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            }
+            .header-actions {
+                order: 2; width: auto; justify-content: flex-end; flex-wrap: nowrap;
+            }
+            .header-actions .btn, #menuBtn {
+                flex: 0 0 auto; max-width: none;
+                width: 40px; height: 40px; padding: 0;
+                display: inline-flex; align-items: center; justify-content: center;
+                font-size: 16px; border-radius: 12px;
+            }
+            /* inline-flex выше перебивает браузерный [hidden] — 🔒 «Выйти» без
+               пароля вылезал на мобиле (урок login-overlay). Возвращаем: */
+            .header-actions .btn[hidden] { display: none; }
+            .btn-label { display: none; }
+
+            /* --- Календарь: компактная сетка как в календаре банка --- */
+            .calendar-section { padding: 14px 10px; }
+            .calendar-header { flex-wrap: wrap; margin-bottom: 10px; }
+            .calendar-nav { order: 1; width: 100%; gap: 4px; }
+            .calendar-nav button { width: 40px; height: 40px; flex: none; }
+            .current-month {
+                min-width: 0; flex: 1; text-align: left;
+                font-size: 24px; font-weight: 700; line-height: 1.2;
+            }
+            .calendar-actions { order: 2; width: 100%; margin-top: 10px; }
+            .calendar-actions .btn { flex: 1; min-height: 44px; border-radius: 12px; }
+            .calendar-actions .btn-today { flex: none; }
+            .calendar-grid { gap: 2px; }
+            .weekday { padding: 4px 0 6px; font-size: 12px; }
+            .day-cell {
+                min-height: 64px; padding: 4px 2px;
+                border: none; background: transparent;
+                display: flex; flex-direction: column; align-items: center;
+                border-radius: 8px;
+            }
+            .day-cell.other-month { opacity: 0.35; }
+            .day-cell.today { border: none; }
+            .day-number { font-size: 15px; font-weight: 500; margin-bottom: 1px; }
+            .day-cell.today .day-number {
+                width: 28px; height: 28px; font-size: 14px; font-weight: 600;
+                margin-bottom: 0;
+            }
+            .day-balance, .day-transactions { display: none; }
+            .day-sums { display: block; text-align: center; margin-top: 2px; }
+
+            /* --- Модалки = bottom sheets (24px сверху, выезд снизу) --- */
+            .modal-overlay { align-items: flex-end; }
+            .modal {
+                width: 100%; max-width: 100%;
+                border-radius: var(--r-xl) var(--r-xl) 0 0;
+                max-height: 86vh; padding: 12px 20px 20px;
+            }
+            .modal::before {
+                content: ''; display: block; width: 36px; height: 4px;
+                border-radius: 2px; background: var(--tui-border);
+                margin: 0 auto 14px;
+            }
+            .modal-overlay.active .modal { animation: sheetUp 0.28s ease-out; }
+            .modal-actions .btn { min-height: 44px; border-radius: 12px; }
+
+            /* --- Нижняя таб-панель: 56px, метки 12px, жёлтый круг --- */
+            .view-nav {
+                min-height: var(--nav-h);
+                border-radius: 14px;           /* все углы: панель «плавает» над краем экрана */
+                left: 6px; right: 6px; bottom: 0; width: auto; margin-bottom: 14px;
+                padding: 6px 10px 10px;
+                padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+                background: var(--tui-surface);
+                backdrop-filter: none; -webkit-backdrop-filter: none;
+                justify-content: space-around;
+            }
+            .view-btn {
+                display: flex; flex-direction: column; align-items: center;
+                background: transparent; color: var(--tui-text-2);
+                padding: 2px 12px 4px; border-radius: 12px;
+            }
+            .view-btn.active { background: transparent; color: var(--tui-text); }
+            .view-ico {
+                width: 32px; height: 32px; font-size: 17px; border-radius: 50%;
+                display: flex; align-items: center; justify-content: center;
+                line-height: 1;
+            }
+            .view-btn.active .view-ico { background: var(--tui-yellow); }
+            .view-label { font-size: 12px; margin-top: 2px; }
+            .view-btn.active .view-label { font-weight: 600; }
+
+            /* --- Сайдбар/карточки --- */
+            .sidebar { gap: 12px; }
+            /* Итоги месяца есть в календаре (панель над сеткой) — на мобиле карточка не нужна */
+            .month-summary { display: none; }
+            .card { padding: 16px; }
+            /* таблицы прогноза: плотнее и с запасом на горизонтальный скролл */
+            #fcTable .chart-table { font-size: 12px; }
+            #fcTable .chart-table th, #fcTable .chart-table td { padding: 5px 6px; }
+            .kpi-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .kpi { padding: 12px; }
+            .kpi-value { font-size: 20px; }
+
+            /* --- Прогноз: вертикальные ряды (отменяет row-флип <=900) --- */
+            .fc-main, .fc-split, .fc-yields { flex-direction: column; }
+            .fc-main > div, .fc-split > div, .fc-yields > div { flex: none; }
+
+            /* --- Таблица активов: компактнее, скролл остаётся --- */
+            .ht-table { font-size: 12px; }
+            .ht-table th, .ht-table td { padding: 6px 8px; }
+        }
+
+        @keyframes sheetUp {
+            from { transform: translateY(40%); opacity: 0.6; }
+            to   { transform: none; opacity: 1; }
+        }
+
+        @media (max-width: 480px) {
+            .kpi-row { grid-template-columns: repeat(2, 1fr); }
+            .calendar-actions { flex-wrap: wrap; }
+            .calendar-actions .btn-add { flex: 1 1 100%; order: 2; }
+            .calendar-actions .btn-today { flex: 1; order: 1; }
+        }
+    </style>
+
+    <style id="app-nav">
+        /* ===== Навигация: drawer ☰, синхронизация в меню, разделы портфеля, баланс по дням ===== */
+
+        /* --- Тёмная тема: класс на <html>, переключатель в настройках.
+             Жёлтый акцент и --tui-on-yellow не меняются — работают и на тёмном. --- */
+        html.dark {
+            --tui-bg: #17181A;
+            --tui-surface: #26272A;
+            --tui-surface-glass: rgba(38, 39, 42, 0.92);
+            --tui-text: #E9EAEC;
+            --tui-text-2: #B3B8C0;
+            --tui-text-3: #7F8794;
+            --tui-border: #34363A;
+            --tui-border-soft: #2C2D30;
+            --tui-stripe: #2C2D30;
+            --tui-green: #4BC96A;
+            --tui-red: #FF5C5C;
+            --tui-blue: #5CA7FF;
+            --tui-focus: rgba(148, 155, 165, 0.6);
+            --sh-small: 0 5px 20px rgba(0, 0, 0, 0.45);
+            --sh-medium: 0 6px 34px rgba(0, 0, 0, 0.5);
+            --sh-popup: 0 8px 28px rgba(0, 0, 0, 0.55);
+        }
+
+        /* --- Drawer --- */
+        .drawer-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.44);
+            z-index: 1100; opacity: 0; transition: opacity 0.25s ease;
+        }
+        .drawer {
+            position: fixed; top: 0; left: 0; bottom: 0;
+            width: 78vw; max-width: 320px;
+            background: var(--tui-surface);
+            transform: translateX(-102%);
+            transition: transform 0.28s ease;
+            z-index: 1200;
+            display: flex; flex-direction: column;
+            padding: 14px 12px 14px;
+            padding: 14px 12px calc(14px + env(safe-area-inset-bottom));
+            overflow-y: auto;
+            box-shadow: var(--sh-popup);
+        }
+        body.drawer-open .drawer-overlay { opacity: 1; }
+        body.drawer-open .drawer { transform: none; }
+        .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 14px; }
+        .drawer-logo { font-family: 'tuiHeading', -apple-system, sans-serif; font-size: 20px; font-weight: 700; color: var(--tui-text); display: flex; align-items: center; gap: 8px; }
+        /* Логотип — тот же шакал, что на иконке приложения (tools/gen-icons.php),
+           прорези и глаза цветом поверхности: работает и в тёмной теме */
+        .drawer-logo svg { width: 26px; height: 26px; flex: none; display: block; }
+        /* в тёмной теме — инверсия, как у иконки: жёлтый шакал, глаза тёмные */
+        html.dark .drawer-logo svg .fur { fill: var(--tui-yellow); }
+        .drawer-group { font-size: 12px; color: var(--tui-text-3); padding: 14px 8px 6px; text-transform: uppercase; letter-spacing: 0.4px; }
+        .drawer-item {
+            display: flex; align-items: center; gap: 12px;
+            width: 100%; padding: 8px;
+            background: transparent; border: none; border-radius: 12px;
+            font-family: inherit; font-size: 16px; color: var(--tui-text);
+            cursor: pointer; text-align: left;
+        }
+        .drawer-item:active { background: var(--tui-bg); }
+        .drawer-ico {
+            width: 40px; height: 40px; border-radius: 50%; flex: none;
+            background: var(--tui-bg);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 17px; line-height: 1;
+        }
+        .drawer-item.active { font-weight: 600; }
+        .drawer-item.active .drawer-ico { background: var(--tui-yellow); }
+
+        /* --- Разделы портфеля --- */
+        #dashboardContent:not([data-section="overview"]) [data-pf="overview"],
+        #dashboardContent:not([data-section="assets"]) [data-pf="assets"],
+        #dashboardContent:not([data-section="payouts"]) [data-pf="payouts"],
+        #dashboardContent:not([data-section="forecast"]) [data-pf="forecast"] { display: none; }
+        /* в «Активах» боковая колонка пуста — сетка в одну колонку */
+        #dashboardContent[data-section="assets"] .dash-grid { grid-template-columns: minmax(0, 1fr); }
+
+        /* --- Вид «Баланс по дням» --- */
+        #balanceView { display: none; }
+        body.balance-mode #balanceView { display: block; }
+        body.balance-mode .main-content { display: none; }
+        .balance-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+        .balance-readout { font-size: 14px; color: var(--tui-text-2); min-width: 0; }
+        .balance-readout strong {
+            display: block; font-size: 22px; font-weight: 700;
+            font-family: 'tuiHeading', -apple-system, sans-serif; color: var(--tui-text);
+        }
+        /* лента + ось сумм слева: ось не скроллится, график уезжает под ней */
+        .balance-graph {
+            display: flex; align-items: stretch;
+            background: var(--tui-surface); border-radius: var(--r-l);
+            padding: 14px 0 14px 6px;
+        }
+        .balance-axis {
+            flex: none; width: 50px; position: relative;
+            border-right: 1px solid var(--tui-border-soft);
+        }
+        .balance-axis span {
+            position: absolute; right: 6px; transform: translateY(-50%);
+            font-size: 10px; color: var(--tui-text-3); white-space: nowrap;
+        }
+        .balance-strip {
+            display: flex; overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 0 8px 0 4px;
+            align-items: stretch;
+            position: relative; /* offsetLeft страниц — от ленты, для скролла к «сегодня» */
+        }
+        /* полосы прокрутки нет — лента листается свайпом и колесом мыши */
+        .balance-strip::-webkit-scrollbar { display: none; }
+        /* страницы встык: без горизонтальных отступов, иначе между месяцами
+           появляется разрыв линии (ширина страницы = дням месяца ровно) */
+        .balance-page { flex: none; padding: 0; }
+        .balance-page-title { font-size: 13px; font-weight: 600; color: var(--tui-text-2); text-align: center; margin-bottom: 6px; }
+        .balance-page svg { display: block; }
+        .balance-start {
+            flex: none; width: 110px; display: flex; align-items: center; justify-content: center;
+            color: var(--tui-text-3); font-size: 13px; text-align: center; padding: 0 8px;
+            border-right: 1px solid var(--tui-border-soft);
+        }
+        .balance-hint { margin-top: 10px; font-size: 12px; color: var(--tui-text-3); text-align: center; }
+
+        @media (max-width: 768px) {
+            /* Баланс: шапка-строка компактнее */
+            .balance-readout strong { font-size: 20px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .drawer, .drawer-overlay { transition: none; }
         }
     </style>
 </head>
 <body>
+    <script>
+        // Тёмная тема — до первой отрисовки, чтобы не было вспышки светлого
+        try { if (localStorage.getItem('walletTheme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) { /* приватный режим */ }
+    </script>
+    <!-- ===== Меню (гамбургер ☰) ===== -->
+    <div class="drawer-overlay" id="drawerOverlay" hidden></div>
+    <nav class="drawer" id="appDrawer" aria-label="Меню приложения">
+        <div class="drawer-head">
+            <span class="drawer-logo"><svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><polygon class="fur" fill="#333333" points="24,4 39,31 50,39 61,31 76,4 81,36 80,50 85,64 76,76 63,90 50,95 37,90 24,76 15,64 20,50 19,36"/><g fill="var(--tui-surface)"><polygon points="25.7,13.8 33.2,27.3 23.2,29.8"/><polygon points="74.3,13.8 66.8,27.3 76.8,29.8"/><polygon points="45.5,80 54.5,80 50,87"/><g transform="translate(38.5,57)"><rect x="-4.5" y="-6.5" width="3" height="13"/><path d="M -1.5 -6.5 L 2 -6.5 A 4 4 0 0 1 2 1.5 L -1.5 1.5 Z"/><rect x="-5.5" y="1.3" width="10" height="1.4"/><rect x="-5.5" y="3.7" width="10" height="1.4"/></g><g transform="translate(61.5,57)"><rect x="-4.5" y="-6.5" width="3" height="13"/><path d="M -1.5 -6.5 L 2 -6.5 A 4 4 0 0 1 2 1.5 L -1.5 1.5 Z"/><rect x="-5.5" y="1.3" width="10" height="1.4"/><rect x="-5.5" y="3.7" width="10" height="1.4"/></g></g></svg>ШАКАЛ</span>
+            <button class="btn btn-secondary btn-icon" id="drawerClose" type="button" aria-label="Закрыть меню">✕</button>
+        </div>
+        <div class="drawer-group">Календарь</div>
+        <button type="button" class="drawer-item" data-nav="calendar"><span class="drawer-ico" aria-hidden="true">📅</span>Календарь</button>
+        <button type="button" class="drawer-item" data-nav="balance"><span class="drawer-ico" aria-hidden="true">📊</span>Баланс по дням</button>
+        <div class="drawer-group">Портфель</div>
+        <button type="button" class="drawer-item" data-nav="pf-overview"><span class="drawer-ico" aria-hidden="true">📈</span>Обзор</button>
+        <button type="button" class="drawer-item" data-nav="pf-assets"><span class="drawer-ico" aria-hidden="true">📋</span>Активы</button>
+        <button type="button" class="drawer-item" data-nav="pf-payouts"><span class="drawer-ico" aria-hidden="true">💸</span>Выплаты</button>
+        <button type="button" class="drawer-item" data-nav="pf-forecast"><span class="drawer-ico" aria-hidden="true">🔮</span>Прогноз</button>
+    </nav>
     <div class="container">
         <header>
+            <button class="btn btn-secondary btn-icon" id="menuBtn" type="button" title="Меню" aria-label="Меню">☰</button>
             <h1>📅 Финансовый календарь</h1>
-        <div class="header-balance">
-            <div class="header-balance-label">Баланс на текущий день</div>
-            <div class="header-balance-value" id="headerBalance">0 ₽</div>
-        </div>
         <div class="header-actions">
             <button class="btn btn-secondary btn-icon" id="stealthBtn" type="button" title="Скрыть суммы" aria-pressed="false">👁</button>
-            <button class="btn btn-secondary" id="categoriesBtn" type="button" onclick="openCategoriesModal()">📁 Категории</button>
-            <button class="btn btn-primary" id="saveBtn" type="button" onclick="saveDataToServer()">💾 Сохранить</button>
-            <button class="btn btn-secondary" id="undoBtn" type="button" onclick="undoLastOperation()">↩️ Отмена</button>
-            <button class="btn btn-secondary" id="logoutBtn" type="button" hidden>🔒 Выйти</button>
-        </div>        </header>
+            <button class="btn btn-secondary btn-icon" id="categoriesBtn" type="button" title="Категории" aria-label="Категории">🏷</button>
+            <button class="btn btn-secondary btn-icon" id="undoBtn" type="button" title="Отменить операцию" aria-label="Отменить операцию">↩️</button>
+            <button class="btn btn-secondary btn-icon" id="syncBtn" type="button" title="Синхронизация портфеля" aria-label="Синхронизация">🔄</button>
+            <button class="btn btn-secondary btn-icon" id="settingsBtn" type="button" onclick="openSettingsModal()" title="Настройки">⚙️</button>
+            <button class="btn btn-secondary server-only" id="logoutBtn" type="button" hidden aria-label="Выйти">🔒<span class="btn-label"> Выйти</span></button>
+        </div>
+        </header>
 
         <nav class="view-nav" id="viewNav" aria-label="Разделы">
-            <button type="button" class="view-btn active" data-view="calendar">📅 Календарь</button>
-            <button type="button" class="view-btn" data-view="dashboard">📈 Портфель</button>
+            <button type="button" class="view-btn active" data-view="calendar"><span class="view-ico" aria-hidden="true">📅</span><span class="view-label">Календарь</span></button>
+            <button type="button" class="view-btn" data-view="dashboard"><span class="view-ico" aria-hidden="true">📈</span><span class="view-label">Портфель</span></button>
         </nav>
 
         <div class="main-content">
@@ -1136,9 +1490,9 @@
                         <span class="current-month" id="currentMonth"></span>
                         <button onclick="nextMonth()">›</button>
                     </div>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <button class="btn btn-secondary" onclick="goToToday()" style="padding: 8px 15px;">📅 Сегодня</button>
-                        <button class="btn btn-primary" onclick="openTransactionModal()">+ Добавить операцию</button>
+                    <div class="calendar-actions">
+                        <button class="btn btn-secondary btn-today" type="button" onclick="goToToday()">📅 Сегодня</button>
+                        <button class="btn btn-primary btn-add" type="button" onclick="openTransactionModal()">+ Добавить операцию</button>
                     </div>
                 </div>
                 <div class="calendar-grid">
@@ -1154,7 +1508,7 @@
             </div>
 
             <div class="sidebar">
-                <div class="card">
+                <div class="card month-summary">
                     <h3>💰 Баланс на месяц</h3>
                     <div class="balance-summary">
                         <div class="balance-item income">
@@ -1189,38 +1543,36 @@
             <div class="card dash-empty" id="dashboardEmpty" hidden>
                 <div class="dash-empty-icon">📈</div>
                 <h3>Портфель ещё не синхронизирован</h3>
-                <p>Заполните токены брокеров в <code>settings.json</code> и нажмите «Синхронизация» —
+                <p><span class="server-only">Заполните токены брокеров в настройках</span><span class="standalone-only">Заполните токены брокеров в разделе «⚙️ Настройки»</span> и нажмите «Синхронизация» —
                    здесь появятся счета, купоны, дивиденды и прогноз роста.</p>
                 <button class="btn btn-primary" id="emptySyncBtn" type="button">🔄 Запустить синхронизацию</button>
                 <button class="btn btn-secondary" id="emptyMockBtn" type="button" style="margin-left: 8px;">Демо-данные</button>
             </div>
 
             <div id="dashboardContent" hidden>
-                <!-- Тулбар синхронизации -->
-                <div class="card sync-toolbar no-swipe">
-                    <div class="sync-main">
-                        <button class="btn btn-primary" id="syncBtn" type="button">🔄 Синхронизация</button>
-                        <div class="sync-info">
-                            <div class="sync-status" id="syncStatus">Готов к синхронизации</div>
-                            <div class="sync-last" id="syncLastTime">Последняя синхронизация: —</div>
-                        </div>
-                    </div>
-                    <div class="sync-progress" id="syncProgressWrap" hidden>
-                        <div class="sync-progress-bar"><div class="sync-progress-fill" id="syncProgressFill"></div></div>
+                <!-- Строка синхронизации: время последней, статусы брокеров и
+                     прогресс (кнопка 🔄 — в шапке; только на «Обзоре») -->
+                <div class="card sync-toolbar" data-pf="overview">
+                    <div class="sync-info">
+                        <div class="sync-status" id="syncStatus">Готов к синхронизации</div>
+                        <div class="sync-last" id="syncLastTime">Последняя синхронизация: —</div>
                     </div>
                     <div class="sync-chips">
                         <span class="broker-chip absent" id="chipTinkoff"><span class="chip-dot"></span>Т-Инвестиции</span>
                         <span class="broker-chip absent" id="chipFinam"><span class="chip-dot"></span>Финам</span>
                     </div>
+                    <div class="sync-progress" id="syncProgressWrap" hidden>
+                        <div class="sync-progress-bar"><div class="sync-progress-fill" id="syncProgressFill"></div></div>
+                    </div>
                 </div>
 
                 <!-- KPI: стоимость / вложено / прибыль / пассивный доход / доходность / выплаты в месяце -->
-                <div class="kpi-row" id="kpiRow"></div>
+                <div class="kpi-row" id="kpiRow" data-pf="overview"></div>
 
                 <!-- Сетка как у snowball-income: широкая колонка + правая колонка виджетов -->
                 <div class="dash-grid">
                     <div class="dash-col dash-col-main">
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="overview">
                             <div class="card-head">
                                 <h3>📈 Стоимость портфеля</h3>
                                 <div class="seg" id="histRange" role="group" aria-label="Период графика">
@@ -1231,7 +1583,7 @@
                             </div>
                             <div id="chartHistory"></div>
                         </div>
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="overview">
                             <h3>🧩 Диверсификация</h3>
                             <div class="card-sub">по типам активов и секторам</div>
                             <div class="div-duo">
@@ -1239,11 +1591,11 @@
                                 <div id="chartSectors"></div>
                             </div>
                         </div>
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="payouts">
                             <h3>💵 Купоны и дивиденды · 12 месяцев</h3>
                             <div id="chartPayments"></div>
                         </div>
-                        <div class="card chart-card" id="holdingsTableCard">
+                        <div class="card chart-card" id="holdingsTableCard" data-pf="assets">
                             <div class="card-head">
                                 <h3>📋 Активы · <span id="htCount">0</span></h3>
                                 <input type="search" id="htSearch" placeholder="Поиск: тикер или название…" aria-label="Поиск активов">
@@ -1252,7 +1604,7 @@
                         </div>
 
                         <!-- Прогноз -->
-                        <div class="card forecast-card no-swipe" id="forecastCard">
+                        <div class="card forecast-card no-swipe" id="forecastCard" data-pf="forecast">
                             <div class="card-head">
                                 <h3>🔮 Прогноз роста капитала</h3>
                                 <div class="seg" id="fcHorizons" role="group" aria-label="Горизонт прогноза">
@@ -1306,26 +1658,22 @@
                     </div>
 
                     <div class="dash-col dash-col-side">
-                        <div class="card goal-card no-swipe" id="goalCard" hidden>
+                        <div class="card goal-card no-swipe" id="goalCard" data-pf="forecast" hidden>
                             <div class="card-head" style="margin-bottom: 0;">
                                 <h3>🎯 Моя цель</h3>
                                 <button class="goal-edit-btn" id="goalEditBtn" type="button">Изменить</button>
                             </div>
                             <div id="goalView"></div>
                         </div>
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="payouts">
                             <h3>🗓 Будущие выплаты</h3>
                             <div id="paymentsCalendar"></div>
                         </div>
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="overview">
                             <h3>🏦 По брокерам</h3>
                             <div id="chartBrokers"></div>
                         </div>
-                        <div class="card chart-card">
-                            <h3>📊 Топ позиций</h3>
-                            <div id="chartHoldings"></div>
-                        </div>
-                        <div class="card chart-card">
+                        <div class="card chart-card" data-pf="overview">
                             <div class="card-head">
                                 <h3>💳 Счета</h3>
                                 <button type="button" class="link-btn" id="accEmptyToggle" hidden>Показать пустые</button>
@@ -1335,6 +1683,19 @@
                     </div>
                 </div>
             </div>
+        </section>
+
+        <!-- ===== Вид «Баланс по дням» ===== -->
+        <section id="balanceView" aria-label="Баланс по дням">
+            <div class="balance-head">
+                <div class="balance-readout" id="balanceReadout">Баланс на сегодня<strong>—</strong></div>
+                <button class="btn btn-secondary" id="balanceTodayBtn" type="button">📍 Сегодня</button>
+            </div>
+            <div class="balance-graph">
+                <div class="balance-axis" id="balanceAxis" aria-hidden="true"></div>
+                <div class="balance-strip" id="balanceStrip"></div>
+            </div>
+            <div class="balance-hint">Листайте график вбок — баланс по дням. Нажмите на день, чтобы увидеть операции.</div>
         </section>
     </div>
 
@@ -1468,11 +1829,121 @@
         </div>
     </div>
 
+    <!-- Settings Modal: брокеры/уведомления (только APK), данные — везде -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>⚙️ Настройки</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Внешний вид</h3>
+                <label class="check-row">
+                    <input type="checkbox" id="setDarkTheme">
+                    <span>🌗 Тёмная тема</span>
+                </label>
+            </div>
+
+            <div class="settings-section">
+                <h3>Брокеры</h3>
+                <div class="form-group">
+                    <label>Токен Т-Инвестиций
+                        <button type="button" class="hint-btn" data-hint="tinkoffHint" aria-label="Где взять токен">?</button>
+                    </label>
+                    <input type="password" id="setTinkoffToken" placeholder="t.…" autocomplete="new-password">
+                    <div class="hint-box" id="tinkoffHint" hidden>
+                        Токен выпускает сам брокер. Откройте приложение Т-Инвестиции:
+                        Профиль → Настройки → «API-доступ» и выпустите токен —
+                        достаточно права читать портфель (торговать не нужно).
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Токен Финам
+                        <button type="button" class="hint-btn" data-hint="finamHint" aria-label="Где взять токен">?</button>
+                    </label>
+                    <input type="password" id="setFinamToken" placeholder="если используется" autocomplete="new-password">
+                    <div class="hint-box" id="finamHint" hidden>
+                        В личном кабинете FinamTrade (finamtrade.ru): Настройки →
+                        «Trading API» → Issue access key. Ключ показывается один
+                        раз — скопируйте сразу после выпуска.
+                    </div>
+                </div>
+                <div class="form-group standalone-only">
+                    <label>Счёт Финам (id)
+                        <button type="button" class="hint-btn" data-hint="finamAccHint" aria-label="Зачем указывать счёт">?</button>
+                    </label>
+                    <input type="text" id="setFinamAccount" placeholder="пусто — все счета" autocomplete="off">
+                    <div class="hint-box" id="finamAccHint" hidden>
+                        Finam отдаёт по токену все счета — включая технические.
+                        Если синхронизация спотыкается о «чужой» счёт, укажите id
+                        нужного: FinamTrade → счёт → реквизиты, либо посмотрите
+                        в ошибке синхронизации. Пусто — синхронизируются все.
+                    </div>
+                </div>
+                <label class="check-row standalone-only">
+                    <input type="checkbox" id="setTrustAll" checked>
+                    <span>Доверять всем сертификатам (как на сервере)</span>
+                </label>
+                <div class="settings-hint server-only">Токены хранятся на сервере и уходят в синхронизацию с брокерами. Пустое поле — текущий токен не меняется.</div>
+                <div class="settings-hint standalone-only">В APK токены хранятся только на устройстве.</div>
+            </div>
+
+            <div class="settings-section server-only">
+                <h3>Пароль</h3>
+                <div class="form-group">
+                    <label>Новый пароль доступа</label>
+                    <input type="password" id="setAuthPassword" placeholder="пусто — не менять" autocomplete="new-password">
+                </div>
+                <label class="check-row" id="setAuthDisableRow" hidden>
+                    <input type="checkbox" id="setAuthDisable">
+                    <span>Отключить пароль (доступ без входа)</span>
+                </label>
+                <div class="settings-hint">Пароль выключен — если задать, календарь и портфель откроются только после входа.</div>
+            </div>
+
+            <div class="settings-section standalone-only">
+                <h3>Уведомления</h3>
+                <label class="check-row">
+                    <input type="checkbox" id="setNotifyEnabled">
+                    <span>Утренний пуш о платежах дня</span>
+                </label>
+                <div class="form-group">
+                    <label>Время</label>
+                    <input type="time" id="setNotifyTime" value="08:00">
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>Данные</h3>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="WalletBackup.exportBackup()">📥 Экспорт JSON</button>
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('importFileInput').click()">📂 Импорт JSON</button>
+                </div>
+                <label class="check-row standalone-only">
+                    <input type="checkbox" id="setBackupTokens">
+                    <span>Включать токены брокеров в бэкап</span>
+                </label>
+                <input type="file" id="importFileInput" accept=".json,application/json" hidden>
+            </div>
+
+            <div class="settings-section">
+                <h3>О приложении</h3>
+                <div class="settings-about">Шакал — <span id="settingsVersion"></span></div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeSettingsModal()">Закрыть</button>
+                <button type="button" class="btn btn-primary" onclick="saveSettings()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Экран входа (показывается только когда в settings.json задан auth.password) -->
     <div class="login-overlay" id="loginOverlay" hidden>
         <div class="login-card">
             <div class="login-icon">🔐</div>
-            <h2>WALLET</h2>
+            <h2>Шакал</h2>
             <p>Введите пароль, чтобы открыть календарь и портфель</p>
             <form id="loginForm">
                 <input type="password" id="loginPassword" placeholder="Пароль" autocomplete="current-password" required>
@@ -1483,9 +1954,11 @@
     </div>
 
     <script src="auth.js?v=4"></script>
-    <script src="app.js?v=13"></script>
-    <script src="charts.js?v=3"></script>
+    <script src="app.js?v=21"></script>
+    <script src="backup.js?v=2"></script>
+    <script src="settings.js?v=6"></script>
+    <script src="charts.js?v=5"></script>
     <script src="forecast.js?v=4"></script>
-    <script src="dashboard.js?v=11"></script>
+    <script src="dashboard.js?v=17"></script>
 </body>
 </html>
