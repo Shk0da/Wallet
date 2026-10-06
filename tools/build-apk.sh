@@ -72,12 +72,30 @@ WORK="$ROOT/android/build"
 rm -rf "$WORK"
 mkdir -p "$WORK/gen" "$WORK/classes" "$WORK/dex"
 
-echo "==> aapt2 compile + link"
-"$AAPT2" compile --dir "$RES" -o "$WORK/res.zip"
+# Версия = число коммитов (монотонно растёт с каждым коммитом):
+# versionName 1.0.N показывается в настройках приложения и в системе
+# как «1.0.N(N)». Без git (например, экспорт без .git) — 1(1.0).
+VCODE="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
+[ "$VCODE" -gt 0 ] || VCODE=1
+VNAME="1.0.$VCODE"
+
+# Атрибуты в манифесте сильнее флагов aapt2 — патчим копию, не репозиторий
+MANIFEST_B="$WORK/AndroidManifest.xml"
+sed -e "s|android:versionCode=\"[0-9]*\"|android:versionCode=\"$VCODE\"|" \
+    -e "s|android:versionName=\"[^\"]*\"|android:versionName=\"$VNAME\"|" \
+    "$MANIFEST" > "$MANIFEST_B"
+
+# Пропатченная копия res: строка app_version в настройках = versionName
+RES_B="$WORK/res"
+cp -R "$RES" "$RES_B"
+sed -i '' -e "s|<string name=\"app_version\">[^<]*</string>|<string name=\"app_version\">$VNAME</string>|" \
+    "$RES_B/values/strings.xml"
+
+echo "==> aapt2 compile + link (версия $VNAME)"
+"$AAPT2" compile --dir "$RES_B" -o "$WORK/res.zip"
 "$AAPT2" link -o "$WORK/base.apk" -I "$PLATFORM_JAR" \
-    --manifest "$MANIFEST" --java "$WORK/gen" -A "$ASSETS" \
+    --manifest "$MANIFEST_B" --java "$WORK/gen" -A "$ASSETS" \
     --min-sdk-version 24 --target-sdk-version 34 \
-    --version-code 1 --version-name 1.0 \
     --auto-add-overlay "$WORK/res.zip"
 
 echo "==> javac"
