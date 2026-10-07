@@ -285,6 +285,25 @@ public class SyncService extends Service {
             }
         }
 
+        /**
+         * Снапшот НА ЧТЕНИЕ — источник настроек для фоновой синхронизации.
+         * localStorage у WebView сервиса и у приложения общий, но страница
+         * приложения пишет токены в память рендерера, а на диск Chromium
+         * коммитит лениво (минутами позже, при уничтожении WebView). Фоновый
+         * WebView читает диск — и не видит только что сохранённые токены.
+         * Снапшот же мост persistSnapshot пишет файлом синхронно при каждом
+         * сохранении настроек, поэтому он всегда свежее localStorage на диске.
+         */
+        @JavascriptInterface
+        public String getSnapshot() {
+            try {
+                JSONObject snap = AlarmScheduler.readSnapshot(SyncService.this);
+                return snap == null ? "" : snap.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         @JavascriptInterface
         public void toast(String msg) { /* фоновый запуск — без визуального шума */ }
 

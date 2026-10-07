@@ -1284,21 +1284,57 @@ window.WalletSync = WalletSync;
         }
     }
 
+    // Если в localStorage нет токенов, а в снапшоте есть — переносим в
+    // localStorage. Снапшот пишется Java-мостом синхронно при каждом
+    // сохранении настроек, поэтому он не отстаёт (в отличие от localStorage
+    // на диске, куда Chromium коммитит записи страницы лениво).
+    function healSettingsFromSnapshot() {
+        if (!window.WalletAndroid || !WalletAndroid.getSnapshot) return;
+        let s = null;
+        try { s = JSON.parse(localStorage.getItem('walletSettings') || 'null'); } catch (e) { s = null; }
+        if (s && ((s.tinkoffToken || '').trim() || (s.finamToken || '').trim())) return;
+        let snap = null;
+        try { snap = JSON.parse(WalletAndroid.getSnapshot() || 'null'); } catch (e) { snap = null; }
+        const from = snap && snap.settings;
+        if (!from || !((from.tinkoffToken || '').trim() || (from.finamToken || '').trim())) return;
+        const merged = Object.assign({}, from, s || {});
+        // пустые поля текущих настроек не должны затирать токены из снапшота
+        if (!(merged.tinkoffToken || '').trim()) merged.tinkoffToken = from.tinkoffToken;
+        if (!(merged.finamToken || '').trim()) merged.finamToken = from.finamToken;
+        try { localStorage.setItem('walletSettings', JSON.stringify(merged)); } catch (e) { /* приватный */ }
+        console.log('[autosync] токены восстановлены из снапшота (localStorage отставал)');
+    }
+
     if (BACKGROUND) {
         setTimeout(function () {
             try {
+                // localStorage здесь читается с ДИСКА, а страница приложения
+                // пишет токены в память своего рендерера — Chromium коммитит
+                // на диск лениво (минутами позже). Свежее только что введённые
+                // токены берём из снапшота: его мост persistSnapshot пишет
+                // файлом синхронно при каждом сохранении настроек.
+                healSettingsFromSnapshot();
                 let last = '';
                 try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный */ }
-                if (last === todayKey() || !window.__walletRunSync) {
-                    console.log('[autosync] работы нет: ' + (last === todayKey() ? 'уже синхронизировано' : 'нет __walletRunSync'));
-                    signalDone(false, '');
+                // Будильник сработал — синхронизируем ВСЕГДА: дневного лимита
+                // нет (пользователь может перезапустить прогон хоть десять
+                // раз). Отметка дня нужна только открытию приложения, чтобы
+                // не гонять второй такой же прогон сразу после будильника.
+                if (!window.__walletRunSync) {
+                    console.log('[autosync] работы нет: нет __walletRunSync');
+                    signalDone(false, 'Ошибка: синхронизатор не загрузился');
                     return;
                 }
                 console.log('[autosync] запуск фоновой синхронизации');
                 const p = window.__walletRunSync(false);
                 if (p && typeof p.then === 'function') {
                     p.then(function (res) {
-                        try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
+                        // День отмечаем только после УСПЕШНОГО прогона:
+                        // неудачный повторится при открытии приложения
+                        // (autoSyncCheck), а будильник лимитом не ограничен
+                        if (res && res.ok) {
+                            try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
+                        }
                         console.log('[autosync] итог: ok=' + !!(res && res.ok)
                             + ' text=' + (res && res.text ? res.text : ''));
                         signalDone(!!(res && res.ok), res && res.text ? res.text : '');
@@ -1308,13 +1344,19 @@ window.WalletSync = WalletSync;
                     });
                 } else {
                     console.log('[autosync] __walletRunSync не дал промис');
-                    signalDone(false, '');
+                    signalDone(false, 'Ошибка синхронизации');
                 }
             } catch (e) { signalDone(false, 'Ошибка синхронизации'); }
         }, 1500); // app.js должен успеть подняться: токены и данные — в localStorage
         return;
     }
 
+    // Догонялка при открытии приложения: будильник мог не сработать (телефон
+    // выключен). Одна попытка на запуск — иначе тик каждые 30с после неудачи
+    // молотил бы брокерами весь день; повтор будет при следующем открытии.
+    // Дневного лимита нет: отметка ставится только по успеху и лишь затем,
+    // чтобы открытие приложения сразу после будильника не дублировало прогон.
+    let inAppAttempted = false;
     function autoSyncCheck() {
         let s = null;
         try { s = JSON.parse(localStorage.getItem('walletSettings') || '{}'); } catch (e) { s = {}; }
@@ -1324,12 +1366,21 @@ window.WalletSync = WalletSync;
         const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
             Math.min(23, parseInt(cfg.hour, 10) || 0), Math.min(59, parseInt(cfg.minute, 10) || 0));
         if (now < target) return;
+        if (inAppAttempted) return;
         const today = todayKey();
         let last = '';
         try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный режим */ }
-        if (last === today) return;
-        try { localStorage.setItem(AUTO_SYNC_DATE_KEY, today); } catch (e) { /* приватный режим */ }
-        if (window.__walletRunSync) window.__walletRunSync(false);
+        if (last === today) return;   // сегодня уже успешно синхронизировано
+        if (!window.__walletRunSync) return;
+        inAppAttempted = true;
+        const p = window.__walletRunSync(false);
+        if (p && typeof p.then === 'function') {
+            p.then(function (res) {
+                if (res && res.ok) {
+                    try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
+                }
+            }, function () { /* неудача — повторим при следующем открытии */ });
+        }
     }
 
     setInterval(autoSyncCheck, 30000);

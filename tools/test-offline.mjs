@@ -416,6 +416,20 @@ ok(svcSrc.indexOf('300_000L') !== -1,
     'SyncService: таймаут 5 мин (два брокера дольше 90 с)');
 ok(svcSrc.indexOf('onConsoleMessage') !== -1 && svcSrc.indexOf('onPageFinished') !== -1,
     'SyncService: JS-консоль и загрузка страницы — в logcat (диагностика)');
+// Регресс (эмулятор 2026-10-07): страница приложения пишет токены в память
+// рендерера, на диск Chromium коммитит лениво — фоновый WebView читал ДИСК
+// и не видел только что сохранённые токены («Нет настроенных брокеров»).
+// Снапшот мост пишет файлом синхронно — он и есть запасной источник
+ok(svcSrc.indexOf('getSnapshot') !== -1,
+    'SyncService: мост getSnapshot — настройки из снапшота для фоновой страницы');
+ok(syncSrc.indexOf('healSettingsFromSnapshot') !== -1,
+    'sync-client: фоновая ветка лечит localStorage из снапшота');
+// Дневного лимита на синхронизации нет: будильник всегда гоняет прогон,
+// отметка дня ставится только по успеху (для догонялки при открытии)
+ok(syncSrc.indexOf('уже синхронизировано') === -1,
+    'sync-client: нет ветки «уже синхронизировано» — лимита в день нет');
+ok(syncSrc.indexOf('if (res && res.ok)') !== -1 && syncSrc.indexOf('inAppAttempted') !== -1,
+    'sync-client: день отмечается только по успеху; догонялка — раз на запуск');
 const recvSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/SyncReceiver.java'), 'utf8');
 ok(recvSrc.indexOf('startForegroundService') !== -1
     && recvSrc.indexOf('rescheduleFromSnapshot') !== -1,
@@ -465,15 +479,39 @@ await sleep(2300); // фоновая ветка ждёт 1.5с инициали�
 const t = new Date();
 const todayStr = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2)
     + '-' + ('0' + t.getDate()).slice(-2);
-ok(spyBg.syncDone >= 1 && bgWindow.localStorage.getItem('walletAutoSyncDate') === todayStr,
-    'фоновая страница: синхронизация запущена, день отмечен, syncDone вызван');
+ok(spyBg.syncDone >= 1,
+    'фоновая страница: синхронизация запущена, syncDone вызван');
+// Прогон НЕУСПЕШЕН (токенов нет) → день НЕ отмечен: при открытии приложения
+// догонялка повторит попытку (дневного лимита нет)
+ok(bgWindow.localStorage.getItem('walletAutoSyncDate') === null,
+    'фоновая страница: неудачный прогон день не отмечает — повтор при открытии');
 // Итог передаётся в сервис для пуша: токенов нет → saved:false, текст причины
 const lastDone = spyBg.syncDoneArgs[spyBg.syncDoneArgs.length - 1];
 ok(!!lastDone && lastDone[0] === false
     && lastDone[1] === 'Нет настроенных брокеров — задайте токены в настройках',
     'фоновая страница: текст итога передан в syncDone (для пуша)');
-// Уже синхронизировано сегодня (например, утром сработал будильник, а страницу
-// сервиса перезапустили) — сразу done, без походов к брокерам
+
+// localStorage на диске отстаёт от страницы приложения (Chromium коммитит
+// лениво): токенов в нём нет, но снапшот (мост пишет файлом синхронно) их
+// имеет — фоновая страница восстанавливает настройки и идёт к брокерам
+const { spy: spyHeal, bridge: bridgeHeal } = makeBridge();
+bridgeHeal.getSnapshot = () => JSON.stringify({
+    settings: { tinkoffToken: 't.healed', finamToken: '', autoSync: { enabled: true, hour: 0, minute: 0 } }
+});
+const healWindow = await boot(path.join(WWW, 'index.html'),
+    ['standalone.js', 'auth.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
+    {
+        fetchImpl: () => Promise.reject(new Error('СЕТЬ ЗАПРЕЩЕНА (offline-тест)')),
+        seed: { walletSettings: { autoSync: { enabled: true, hour: 0, minute: 0 } } },
+        bridge: bridgeHeal,
+        url: 'https://wallet.local/?autosync=1'
+    });
+await sleep(2300);
+const healedSettings = JSON.parse(healWindow.localStorage.getItem('walletSettings') || '{}');
+ok((healedSettings.tinkoffToken || '') === 't.healed' && spyHeal.http >= 1,
+    'фоновая страница: токены восстановлены из снапшота, синхронизация пошла к брокерам');
+// Дневного лимита НЕТ: даже если день уже отмечен (утренний будильник
+// отработал, страницу сервиса перезапустили) — будильник снова синхронизирует
 const { spy: spyBg2, bridge: bridgeBg2 } = makeBridge();
 const bgWindow2 = await boot(path.join(WWW, 'index.html'),
     ['standalone.js', 'auth.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
@@ -486,11 +524,12 @@ const bgWindow2 = await boot(path.join(WWW, 'index.html'),
 // ключ дня — сырая строка, не JSON: пишем до срабатывания таймера фоновой ветки
 bgWindow2.localStorage.setItem('walletAutoSyncDate', todayStr);
 await sleep(2300);
-ok(bridgeBg2 && spyBg2.syncDone >= 1 && spyBg2.http === 0,
-    'фоновая страница: день уже отмечен — syncDone без обращений к брокерам');
+ok(bridgeBg2 && spyBg2.syncDone >= 1,
+    'фоновая страница: день отмечен — но будильник всё равно синхронизирует (лимита нет)');
 const lastDone2 = spyBg2.syncDoneArgs[spyBg2.syncDoneArgs.length - 1];
-ok(!!lastDone2 && lastDone2[1] === '',
-    'фоновая страница: работы не было — пустой итог (пуш не показываем)');
+ok(!!lastDone2 && lastDone2[0] === false
+    && lastDone2[1] === 'Нет настроенных брокеров — задайте токены в настройках',
+    'фоновая страница: повторный запуск в тот же день — прогон идёт честно');
 
 const javaSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
 ok(javaSrc.indexOf('__walletRelock') !== -1,
