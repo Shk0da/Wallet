@@ -17,9 +17,10 @@ const WalletSettings = (() => {
     const defaults = () => ({
         tinkoffToken: '',
         finamToken: '',
-        finamAccountId: '',           // пусто — синхронизируются все счета Finam
+        appPassword: '',              // пароль на вход (только APK); пусто — вход без пароля
         trustAllCerts: true,          // паритет с sync.php: российские CA доверяют всем
-        notifications: { enabled: false, hour: 8, minute: 0 }
+        notifications: { enabled: false, hour: 8, minute: 0 },
+        autoSync: { enabled: false, hour: 9, minute: 0 }  // раз в день при открытом приложении
     });
 
     function load() {
@@ -33,12 +34,20 @@ const WalletSettings = (() => {
                 // до фикса (мобильная вставка; Finam отвечал на такой секрет 401)
                 tinkoffToken: typeof s.tinkoffToken === 'string' ? s.tinkoffToken.trim() : '',
                 finamToken: typeof s.finamToken === 'string' ? s.finamToken.trim() : '',
-                finamAccountId: typeof s.finamAccountId === 'string' ? s.finamAccountId.trim() : '',
-                trustAllCerts: s.trustAllCerts !== false,
+                // пароль не триммим: пробелы в нём допустимы как часть значения
+                appPassword: typeof s.appPassword === 'string' ? s.appPassword : '',
+                // настройка из UI убрана: всегда доверяем (как на сервере),
+                // иначе корпоративный TLS-инспектор валит запросы к брокерам
+                trustAllCerts: true,
                 notifications: {
                     enabled: !!(s.notifications && s.notifications.enabled),
                     hour: clampInt(s.notifications && s.notifications.hour, 0, 23, 8),
                     minute: clampInt(s.notifications && s.notifications.minute, 0, 59, 0)
+                },
+                autoSync: {
+                    enabled: !!(s.autoSync && s.autoSync.enabled),
+                    hour: clampInt(s.autoSync && s.autoSync.hour, 0, 23, 9),
+                    minute: clampInt(s.autoSync && s.autoSync.minute, 0, 59, 0)
                 }
             };
         } catch (e) {
@@ -115,12 +124,17 @@ const WalletSettings = (() => {
             // переводом строки (Finam отвечал на такой секрет 401)
             tinkoffToken: String(s.tinkoffToken || '').trim(),
             finamToken: String(s.finamToken || '').trim(),
-            finamAccountId: String(s.finamAccountId || '').trim(),
-            trustAllCerts: s.trustAllCerts !== false,
+            appPassword: typeof s.appPassword === 'string' ? s.appPassword : '',
+            trustAllCerts: true,
             notifications: {
                 enabled: !!(s.notifications && s.notifications.enabled),
                 hour: clampInt(s.notifications && s.notifications.hour, 0, 23, 8),
                 minute: clampInt(s.notifications && s.notifications.minute, 0, 59, 0)
+            },
+            autoSync: {
+                enabled: !!(s.autoSync && s.autoSync.enabled),
+                hour: clampInt(s.autoSync && s.autoSync.hour, 0, 23, 9),
+                minute: clampInt(s.autoSync && s.autoSync.minute, 0, 59, 0)
             }
         };
         try { localStorage.setItem(KEY, JSON.stringify(settings)); } catch (e) { /* приватный режим */ }
@@ -175,14 +189,30 @@ const WalletSettings = (() => {
     function applyToForm(s) {
         set('setTinkoffToken', s.tinkoffToken);
         set('setFinamToken', s.finamToken);
-        set('setFinamAccount', s.finamAccountId);
-        check('setTrustAll', s.trustAllCerts);
+        // Пароль на вход (APK): само значение не показываем — только состояние
+        set('setAppPassword', '');
+        const passOn = s.appPassword !== '';
+        const ap = document.getElementById('setAppPassword');
+        if (ap) ap.placeholder = passOn ? 'задан — введите новый, чтобы сменить' : 'пусто — не менять';
+        const row = document.getElementById('setAppPassDisableRow');
+        if (row) row.hidden = !passOn;
+        check('setAppPassDisable', false);
+        const hint = document.getElementById('setAppPassHint');
+        if (hint) hint.textContent = passOn
+            ? 'Пароль включён: приложение спросит его при запуске.'
+            : 'Пароль не задан — приложение открывается сразу.';
         check('setNotifyEnabled', s.notifications.enabled);
         check('setDarkTheme', themeIsDark());
         const time = document.getElementById('setNotifyTime');
         if (time) {
             time.value = ('0' + s.notifications.hour).slice(-2) + ':' +
                          ('0' + s.notifications.minute).slice(-2);
+        }
+        check('setAutoSync', !!(s.autoSync && s.autoSync.enabled));
+        const autoTime = document.getElementById('setAutoSyncTime');
+        if (autoTime) {
+            autoTime.value = ('0' + clampInt(s.autoSync && s.autoSync.hour, 0, 23, 9)).slice(-2) + ':' +
+                             ('0' + clampInt(s.autoSync && s.autoSync.minute, 0, 59, 0)).slice(-2);
         }
         const v = document.getElementById('settingsVersion');
         if (v) {
@@ -225,12 +255,27 @@ const WalletSettings = (() => {
         }
         const enabled = !!(document.getElementById('setNotifyEnabled') || {}).checked;
 
+        let autoT = { hour: 9, minute: 0 };
+        const autoEl = document.getElementById('setAutoSyncTime');
+        if (autoEl && /^\d{2}:\d{2}$/.test(autoEl.value || '')) {
+            const ap = autoEl.value.split(':');
+            autoT = { hour: parseInt(ap[0], 10), minute: parseInt(ap[1], 10) };
+        }
+        const autoOn = !!(document.getElementById('setAutoSync') || {}).checked;
+
+        // Пароль: непустое поле — новый пароль; галка «Отключить» — убрать;
+        // пусто и без галки — текущий не меняется
+        const cur = load();
+        const pwd = (document.getElementById('setAppPassword') || {}).value || '';
+        const pwdOff = !!((document.getElementById('setAppPassDisable') || {}).checked);
+
         save({
             tinkoffToken: ((document.getElementById('setTinkoffToken') || {}).value || '').trim(),
             finamToken: ((document.getElementById('setFinamToken') || {}).value || '').trim(),
-            finamAccountId: (document.getElementById('setFinamAccount') || {}).value || '',
-            trustAllCerts: !!(document.getElementById('setTrustAll') || {}).checked,
-            notifications: { enabled, hour: time.hour, minute: time.minute }
+            appPassword: pwd !== '' ? pwd : (pwdOff ? '' : cur.appPassword),
+            trustAllCerts: true,
+            notifications: { enabled, hour: time.hour, minute: time.minute },
+            autoSync: { enabled: autoOn, hour: autoT.hour, minute: autoT.minute }
         });
 
         // Разрешение на уведомления запрашиваем в момент включения (Android 13+)

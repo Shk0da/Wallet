@@ -304,18 +304,59 @@ ok(tinkHint.hidden === true, 'повторный «?» → подсказка с
 doc.getElementById('setNotifyEnabled').checked = true;
 doc.getElementById('setNotifyTime').value = '07:30';
 doc.getElementById('setTinkoffToken').value = 'test-token-123';
-doc.getElementById('setFinamAccount').value = 'FAB00012345';
+doc.getElementById('setAppPassword').value = '1234';
 offlineWindow.WalletSettings.saveFromForm();
 const savedSettings = JSON.parse(offlineWindow.localStorage.getItem('walletSettings'));
 ok(savedSettings.notifications.enabled === true
     && savedSettings.notifications.hour === 7
     && savedSettings.notifications.minute === 30, 'настройки сохранены (07:30, вкл)');
-ok(savedSettings.finamAccountId === 'FAB00012345',
-    'настройки: счёт Финам сохранён (sync-client фильтрует счета по нему)');
-ok(doc.getElementById('setFinamAccount').closest('.standalone-only') !== null,
-    'модалка: поле «Счёт Финам» есть и только в APK');
-ok(spy.scheduleNotification.length === 1 && spy.scheduleNotification[0][0] === true
-    && spy.scheduleNotification[0][1] === 7 && spy.scheduleNotification[0][2] === 30,
+ok(savedSettings.appPassword === '1234',
+    'настройки: пароль на вход сохранён (APK спросит его при запуске)');
+ok(doc.getElementById('setAppPassword').closest('.standalone-only') !== null,
+    'модалка: секция «Пароль на вход» есть и только в APK');
+// смена: пустое поле + галка «Отключить» — пароль убирается
+offlineWindow.WalletSettings.open();
+await sleep(20);
+doc.getElementById('setAppPassword').value = '';
+doc.getElementById('setAppPassDisable').checked = true;
+offlineWindow.WalletSettings.saveFromForm();
+ok(JSON.parse(offlineWindow.localStorage.getItem('walletSettings')).appPassword === '',
+    'настройки: галка «Отключить» убирает пароль');
+// поле «Счёт Финам» убрано: синхронизируются все счета токена
+ok(doc.getElementById('setFinamAccount') === null,
+    'модалка: поля «Счёт Финам» больше нет (все счета)');
+ok(doc.getElementById('setTrustAll') === null
+    && JSON.parse(offlineWindow.localStorage.getItem('walletSettings')).trustAllCerts === true,
+    'настройки: «Доверять всем сертификатам» скрыта, всегда включена');
+const syncSrc = readFileSync(path.join(WWW, 'sync-client.js'), 'utf8');
+ok(syncSrc.indexOf('finamAccountId') === -1,
+    'sync-client: счёт Финам больше не фильтруется');
+// Автосинхронизация: секция настроек + планировщик раз в день при открытом
+// приложении; запуск — штатный путь кнопки (window.__walletRunSync)
+ok(doc.getElementById('setAutoSync') !== null
+    && doc.getElementById('setAutoSyncTime') !== null
+    && doc.getElementById('setAutoSync').closest('.standalone-only') !== null,
+    'настройки: «Автосинхронизация брокеров» (вкл/выкл + время) — секция APK');
+offlineWindow.WalletSettings.open();
+await sleep(20);
+doc.getElementById('setAutoSync').checked = true;
+doc.getElementById('setAutoSyncTime').value = '06:45';
+offlineWindow.WalletSettings.saveFromForm();
+const autoSaved = JSON.parse(offlineWindow.localStorage.getItem('walletSettings')).autoSync;
+ok(autoSaved && autoSaved.enabled === true && autoSaved.hour === 6 && autoSaved.minute === 45,
+    'настройки: автосинхронизация сохранена (06:45, вкл)');
+ok(syncSrc.indexOf('function autoSyncCheck') !== -1
+    && syncSrc.indexOf('setInterval(autoSyncCheck, 30000)') !== -1
+    && syncSrc.indexOf('window.__walletRunSync(false)') !== -1,
+    'sync-client: планировщик проверяет время раз в 30с и зовёт штатный sync');
+ok(dashSrc.indexOf('window.__walletRunSync') !== -1,
+    'dashboard: кнопка и автосинхронизация — один путь запуска');
+const authSrc = readFileSync(path.join(WWW, 'auth.js'), 'utf8');
+ok(authSrc.indexOf('WALLET_STANDALONE') !== -1 && authSrc.indexOf('walletUnlocked') !== -1,
+    'auth: APK спрашивает локальный пароль (разблокировка на запуск)');
+const lastNotif = spy.scheduleNotification[spy.scheduleNotification.length - 1];
+ok(spy.scheduleNotification.length >= 1 && lastNotif[0] === true
+    && lastNotif[1] === 7 && lastNotif[2] === 30,
     'мост: scheduleNotification(true, 7, 30)');
 ok(spy.requestPerm >= 1, 'мост: запрошено разрешение уведомлений');
 ok(spy.persistSnapshot >= 1, 'мост: persistSnapshot при сохранении настроек');
@@ -417,6 +458,21 @@ await sleep(30);
 ok(doc.querySelectorAll('#balanceStrip .balance-page').length >= 7
     && doc.querySelectorAll('#balanceAxis span').length === 5,
     'баланс: после data-loaded лента и ось перестроены без ошибок');
+// Участки ниже нуля — красные: линия поверх синей + заливка до нулевой,
+// с точным пересечением нуля (интерполяция между соседними днями)
+ok(appSrc.indexOf("rl.style.stroke = 'var(--tui-red)'") !== -1
+    && appSrc.indexOf('rgba(255, 92, 92, 0.14)') !== -1
+    && appSrc.indexOf('const t = (0 - prev) / (b - prev);') !== -1,
+    'баланс: участки ниже нуля рисуются красными (линия + заливка до нуля)');
+// «📍 Сегодня» ставит метку на сегодняшний день и показывает баланс дня:
+// страницы регистрируют show(), кнопка зовёт его для текущего месяца
+ok(appSrc.indexOf('balanceState.pickers[balMonthKey(mo.y, mo.m)]') !== -1
+    && /function balScrollToToday[\s\S]{0,800}picker\.show\(Math\.min\(t\.getDate\(\) - 1/.test(appSrc),
+    'баланс: «Сегодня» — метка на текущем дне и рид-аут с балансом');
+// Календарь: клетка дня с отрицательным балансом на конец дня — красный фон
+ok(appSrc.indexOf("cumulativeBalance < 0 ? ' neg-eod' : ''") !== -1
+    && srcIndex.indexOf('.day-cell.neg-eod {') !== -1,
+    'календарь: отрицательный баланс на конец дня — красный фон клетки');
 
 section('Активы: все колонки и на мобиле');
 // Раньше клетки прятали классами hide-sm/hide-xs, а заголовки — нет: на узком
@@ -527,8 +583,11 @@ ok(!wdoc.getElementById('setTinkoffToken').closest('.standalone-only'),
 ok(wdoc.getElementById('setAuthPassword') !== null
     && wdoc.getElementById('setAuthPassword').closest('.server-only') !== null,
     'модалка: секция «Пароль» есть и только для веба');
-ok(wdoc.getElementById('setTrustAll').closest('.standalone-only') !== null,
-    'модалка: «доверять сертификатам» — только APK');
+ok(wdoc.getElementById('setTrustAll') === null,
+    'модалка: «доверять сертификатам» скрыта (всегда включена)');
+ok(wdoc.getElementById('setAppPassword') !== null
+    && wdoc.getElementById('setAppPassword').closest('.standalone-only') !== null,
+    'модалка: «Пароль на вход» — секция APK, в вебе скрыта CSS');
 webWindow.WalletSettings.open();
 await sleep(60); // refreshServerStatus
 ok(webCalls.some(c => c.indexOf('settings.php GET') !== -1),

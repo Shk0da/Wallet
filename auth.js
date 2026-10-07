@@ -1,6 +1,10 @@
 // Авторизация дашборда: пароль задаётся в settings.json (auth.password).
 // Пустой пароль = авторизация выключена — оверлей не показывается, всё работает как раньше.
 //
+// В APK (window.WALLET_STANDALONE) пароль хранится локально — в настройках
+// приложения (walletSettings.appPassword), серверного login.php там нет: проверка
+// идёт на месте, разблокировка живёт до закрытия приложения (sessionStorage).
+//
 // Сессия передаётся двумя равнозначными путями: cookie wallet_auth (ставит сервер)
 // и заголовок X-Wallet-Auth с токеном из localStorage. Запасной путь нужен для
 // браузеров, которые не сохраняют/не шлют cookie (приватный режим, блокировки) —
@@ -9,7 +13,22 @@ const WalletAuth = (() => {
     // Относительная база: работает и в корне (php -S), и под префиксом /wallet (Herd)
     const BASE = '.';
     const TOKEN_KEY = 'walletAuthToken';
+    const UNLOCK_KEY = 'walletUnlocked'; // «вводили пароль в этом запуске» (только APK)
+    const standalone = () => !!window.WALLET_STANDALONE;
     let authRequired = false;
+
+    // Пароль APK из walletSettings (без загрузки всего модуля настроек)
+    const storedAppPassword = () => {
+        try {
+            const raw = localStorage.getItem('walletSettings');
+            if (!raw) return '';
+            const s = JSON.parse(raw);
+            return typeof s.appPassword === 'string' ? s.appPassword : '';
+        } catch (e) { return ''; }
+    };
+    const appUnlocked = () => {
+        try { return sessionStorage.getItem(UNLOCK_KEY) === '1'; } catch (e) { return false; }
+    };
 
     const storedToken = () => {
         try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
@@ -62,6 +81,20 @@ const WalletAuth = (() => {
         if (!inp || !btn) return;
         err.textContent = '';
         btn.disabled = true;
+
+        // APK: сверяем локально, сервера нет
+        if (standalone()) {
+            if (inp.value !== '' && inp.value === storedAppPassword()) {
+                try { sessionStorage.setItem(UNLOCK_KEY, '1'); } catch (e2) { /* sessionStorage нет */ }
+                hide();
+            } else {
+                err.textContent = 'Неверный пароль';
+                btn.disabled = false;
+            }
+            inp.value = '';
+            return;
+        }
+
         try {
             const r = await fetch(BASE + '/login.php', {
                 method: 'POST',
@@ -113,6 +146,17 @@ const WalletAuth = (() => {
     }
 
     async function init() {
+        // APK: локальный пароль, без сервера. Выхода нет — на холодном старте
+        // снова спросит (sessionStorage живёт до закрытия приложения).
+        if (standalone()) {
+            authRequired = storedAppPassword() !== '';
+            const lb = document.getElementById('logoutBtn');
+            if (lb) lb.hidden = true;
+            if (authRequired && !appUnlocked()) show();
+            else if (authRequired) hide();
+            return;
+        }
+
         let status = null;
         try {
             const r = await fetch(BASE + '/login.php', { cache: 'no-store', credentials: 'same-origin' });

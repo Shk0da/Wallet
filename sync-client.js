@@ -805,14 +805,13 @@ const WalletSync = (() => {
                 // хвостовой перевод строки — Finam отвечал на такой секрет 401
                 tinkoffToken: typeof s.tinkoffToken === 'string' ? s.tinkoffToken.trim() : '',
                 finamToken: typeof s.finamToken === 'string' ? s.finamToken.trim() : '',
-                finamAccountId: typeof s.finamAccountId === 'string' ? s.finamAccountId.trim() : '',
                 trustAllCerts: s.trustAllCerts !== false
             };
         }
         let raw = null;
         try { raw = localStorage.getItem(SETTINGS_KEY); } catch (e) { raw = null; }
         if (raw === null || raw === '') {
-            return { tinkoffToken: '', finamToken: '', finamAccountId: '', trustAllCerts: true };
+            return { tinkoffToken: '', finamToken: '', trustAllCerts: true };
         }
         let s;
         try { s = JSON.parse(raw); } catch (e) { throw new Error('Настройки повреждены (неверный JSON)'); }
@@ -820,7 +819,6 @@ const WalletSync = (() => {
         return {
             tinkoffToken: typeof s.tinkoffToken === 'string' ? s.tinkoffToken.trim() : '',
             finamToken: typeof s.finamToken === 'string' ? s.finamToken.trim() : '',
-            finamAccountId: typeof s.finamAccountId === 'string' ? s.finamAccountId.trim() : '',
             trustAllCerts: s.trustAllCerts !== false
         };
     }
@@ -938,9 +936,8 @@ const WalletSync = (() => {
                     progress.finish('finam_auth', 'Finam: авторизация OK', 'finam');
 
                     progress.step('finam_accounts', 0.3, 'Получение счетов Finam…', 'finam');
+                    // все счета токена — фильтр по конкретному счёту убран
                     let ids = await finamClient.getAccountIds();
-                    const filterId = settings.finamAccountId.trim();
-                    if (filterId !== '') ids = ids.filter(id => id === filterId);
                     brokerMeta.finam.accounts = ids.length;
                     if (ids.length === 0) throw new Error('Finam: счета не найдены');
 
@@ -1257,3 +1254,34 @@ const WalletSync = (() => {
     return { runSync };
 })();
 window.WalletSync = WalletSync;
+
+// ---------- Автосинхронизация (APK) ----------
+// Раз в день в заданное время (настройки → «Синхронизация»): пока приложение
+// открыто, время пришло и сегодня автосинка ещё не было — запускаем штатную
+// синхронизацию, ту же, что у кнопки «Обновить» в портфеле. День отмечаем
+// ДО запуска: неудача не должна превращаться в ретраи каждые 30 секунд.
+(function () {
+    const AUTO_SYNC_DATE_KEY = 'walletAutoSyncDate';
+
+    function autoSyncCheck() {
+        let s = null;
+        try { s = JSON.parse(localStorage.getItem('walletSettings') || '{}'); } catch (e) { s = {}; }
+        const cfg = s && s.autoSync;
+        if (!cfg || !cfg.enabled) return;
+        const now = new Date();
+        const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+            Math.min(23, parseInt(cfg.hour, 10) || 0), Math.min(59, parseInt(cfg.minute, 10) || 0));
+        if (now < target) return;
+        const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2)
+            + '-' + ('0' + now.getDate()).slice(-2);
+        let last = '';
+        try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный режим */ }
+        if (last === today) return;
+        try { localStorage.setItem(AUTO_SYNC_DATE_KEY, today); } catch (e) { /* приватный режим */ }
+        if (window.__walletRunSync) window.__walletRunSync(false);
+    }
+
+    setInterval(autoSyncCheck, 30000);
+    // запуск приложения: если время уже пришло — не ждём первого тика
+    setTimeout(autoSyncCheck, 4000);
+})();

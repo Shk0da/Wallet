@@ -272,6 +272,16 @@
             opacity: 0.5;
         }
 
+        /* Баланс на конец дня ниже нуля — красный фон клетки (виден сразу,
+           без чтения цифры); красим и other-month, но мягче из-за opacity */
+        .day-cell.neg-eod {
+            background: rgba(255, 92, 92, 0.10);
+        }
+
+        .day-cell.neg-eod:not(.other-month) {
+            border-color: rgba(255, 92, 92, 0.35);
+        }
+
         .day-cell.today {
             border: 2px solid var(--tui-blue);
         }
@@ -1869,22 +1879,6 @@
                         раз — скопируйте сразу после выпуска.
                     </div>
                 </div>
-                <div class="form-group standalone-only">
-                    <label>Счёт Финам (id)
-                        <button type="button" class="hint-btn" data-hint="finamAccHint" aria-label="Зачем указывать счёт">?</button>
-                    </label>
-                    <input type="text" id="setFinamAccount" placeholder="пусто — все счета" autocomplete="off">
-                    <div class="hint-box" id="finamAccHint" hidden>
-                        Finam отдаёт по токену все счета — включая технические.
-                        Если синхронизация спотыкается о «чужой» счёт, укажите id
-                        нужного: FinamTrade → счёт → реквизиты, либо посмотрите
-                        в ошибке синхронизации. Пусто — синхронизируются все.
-                    </div>
-                </div>
-                <label class="check-row standalone-only">
-                    <input type="checkbox" id="setTrustAll" checked>
-                    <span>Доверять всем сертификатам (как на сервере)</span>
-                </label>
                 <div class="settings-hint server-only">Токены хранятся на сервере и уходят в синхронизацию с брокерами. Пустое поле — текущий токен не меняется.</div>
                 <div class="settings-hint standalone-only">В APK токены хранятся только на устройстве.</div>
             </div>
@@ -1903,6 +1897,19 @@
             </div>
 
             <div class="settings-section standalone-only">
+                <h3>Пароль на вход</h3>
+                <div class="form-group">
+                    <label>Новый пароль</label>
+                    <input type="password" id="setAppPassword" placeholder="пусто — не менять" autocomplete="new-password">
+                </div>
+                <label class="check-row" id="setAppPassDisableRow" hidden>
+                    <input type="checkbox" id="setAppPassDisable">
+                    <span>Отключить пароль</span>
+                </label>
+                <div class="settings-hint" id="setAppPassHint">Пароль не задан — приложение открывается сразу.</div>
+            </div>
+
+            <div class="settings-section standalone-only">
                 <h3>Уведомления</h3>
                 <label class="check-row">
                     <input type="checkbox" id="setNotifyEnabled">
@@ -1912,6 +1919,19 @@
                     <label>Время</label>
                     <input type="time" id="setNotifyTime" value="08:00">
                 </div>
+            </div>
+
+            <div class="settings-section standalone-only">
+                <h3>Синхронизация</h3>
+                <label class="check-row">
+                    <input type="checkbox" id="setAutoSync">
+                    <span>Автосинхронизация брокеров раз в день</span>
+                </label>
+                <div class="form-group">
+                    <label>Время</label>
+                    <input type="time" id="setAutoSyncTime" value="09:00">
+                </div>
+                <div class="settings-hint">Сработает, когда приложение открыто: после указанного времени данные брокеров обновятся сами.</div>
             </div>
 
             <div class="settings-section">

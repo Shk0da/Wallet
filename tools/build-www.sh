@@ -5,7 +5,8 @@
 #   ./tools/build-www.sh
 #
 # Что делает:
-#   * копирует index.html и JS, вырезает auth.js (логина в APK нет);
+#   * копирует index.html и JS (auth.js остаётся: в APK он проверяет
+#     локальный пароль на вход, без серверного login.php);
 #   * standalone.js и sync-client.js встают первыми скриптами;
 #   * шрифты лежат в репозитории (fonts/, fonts.css + woff2) и копируются в
 #     www/fonts/ — внешних запросов из APK нет. Если каталога нет — бутстрап
@@ -67,8 +68,9 @@ fi
 if [ "$FONTS_OK" -ne 1 ]; then rm -rf "$OUT/fonts"; fi
 
 # ---------- index.html ----------
-sed -e '/<script src="auth\.js/d' \
-    -e 's/?v=[0-9][0-9]*//g' \
+# auth.js остаётся: в APK он же закрывает вход локальным паролем (login.php
+# там нет — ветка window.WALLET_STANDALONE проверяет пароль на месте)
+sed -e 's/?v=[0-9][0-9]*//g' \
     "$ROOT/index.html" > "$OUT/index.html"
 
 # standalone.js и sync-client.js — первыми, перед app.js
@@ -81,10 +83,10 @@ if [ "$FONTS_OK" -ne 1 ]; then
 fi
 
 grep -q 'standalone.js' "$OUT/index.html" || { echo "ОШИБКА: standalone.js не вставлен" >&2; exit 1; }
-grep -q 'auth.js' "$OUT/index.html" && { echo "ОШИБКА: auth.js не вырезан" >&2; exit 1; }
+grep -q 'auth\.js' "$OUT/index.html" || { echo "ОШИБКА: auth.js не подключён (локальный пароль)" >&2; exit 1; }
 
 # ---------- JS ----------
-for f in standalone.js sync-client.js app.js backup.js settings.js charts.js forecast.js dashboard.js; do
+for f in standalone.js sync-client.js auth.js app.js backup.js settings.js charts.js forecast.js dashboard.js; do
     [ -f "$ROOT/$f" ] || { echo "ОШИБКА: нет $f" >&2; exit 1; }
     cp "$ROOT/$f" "$OUT/"
 done

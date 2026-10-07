@@ -350,10 +350,12 @@ function renderCalendar() {
 
 function createDayCell(date, isOtherMonth, isToday = false) {
     const cell = document.createElement('div');
-    cell.className = `day-cell${isOtherMonth ? ' other-month' : ''}${isToday ? ' today' : ''}`;
+    const cumulativeBalance = getCumulativeBalance(date);
+    // отрицательный баланс на конец дня — красный фон клетки
+    cell.className = `day-cell${isOtherMonth ? ' other-month' : ''}${isToday ? ' today' : ''}`
+        + (cumulativeBalance < 0 ? ' neg-eod' : '');
     cell.onclick = () => openDayModal(date);
 
-    const cumulativeBalance = getCumulativeBalance(date);
     const balanceClass = cumulativeBalance >= 0 ? 'positive' : 'negative';
     const dayTransactions = getDayTransactions(date);
 
@@ -790,6 +792,45 @@ function buildBalPage(mo, lo, hi) {
     line.style.stroke = 'var(--tui-blue)';
     svg.appendChild(line);
 
+    // участки ниже нуля — красным: линия поверх синей + заливка до нулевой.
+    // На пересечении нуля вставляем точку на самой нулевой линии, чтобы
+    // красный начинался/заканчивался ровно там, где баланс меняет знак
+    const yZero = yOf(0);
+    let run = [];
+    const flushRun = () => {
+        if (run.length >= 2) {
+            let rd = '', rp = '';
+            run.forEach((q, k) => {
+                rd += (k ? ' L' : 'M') + q.x + ' ' + q.y;
+                rp += (k ? ' ' : '') + q.x + ',' + q.y;
+            });
+            rd += ' L' + run[run.length - 1].x + ' ' + yZero + ' L' + run[0].x + ' ' + yZero + ' Z';
+            const ra = balSvgEl('path', { d: rd });
+            ra.style.fill = 'rgba(255, 92, 92, 0.14)';
+            svg.appendChild(ra);
+            const rl = balSvgEl('polyline', { points: rp, fill: 'none', 'stroke-width': 2 });
+            rl.style.stroke = 'var(--tui-red)';
+            svg.appendChild(rl);
+        }
+        run = [];
+    };
+    for (let i = 0; i < days; i++) {
+        const b = pts[i].bal;
+        const prev = i > 0 ? pts[i - 1].bal : null;
+        if (b < 0) {
+            if (prev !== null && prev >= 0) {
+                const t = (0 - prev) / (b - prev);
+                run.push({ x: xOf(i - 1) + t * BAL_DAY_W, y: yZero });
+            }
+            run.push({ x: xOf(i), y: yOf(b) });
+        } else if (prev !== null && prev < 0) {
+            const t = (0 - prev) / (b - prev);
+            run.push({ x: xOf(i - 1) + t * BAL_DAY_W, y: yZero });
+            flushRun();
+        }
+    }
+    flushRun();
+
     // нулевая линия, если баланс меняет знак
     if (lo < 0 && hi > 0) {
         const zero = balSvgEl('line', { x1: BAL_PAD_L, x2: w - BAL_PAD_R, y1: yOf(0), y2: yOf(0), 'stroke-dasharray': '3 3', 'stroke-width': 1 });
@@ -845,8 +886,18 @@ function buildBalPage(mo, lo, hi) {
         dot.setAttribute('cx', px);
         dot.setAttribute('cy', yOf(pts[i].bal));
         dot.style.display = '';
+        // метка одна на всю ленту: прошлую (другой месяц) прячем
+        const prev = balanceState.activeMark;
+        if (prev && prev.guide !== guide) {
+            prev.guide.style.display = 'none';
+            prev.dot.style.display = 'none';
+        }
+        balanceState.activeMark = { guide: guide, dot: dot };
         balUpdateReadout(new Date(mo.y, mo.m, pts[i].d), pts[i].bal);
     };
+    // «📍 Сегодня» и повторный вход на экран зовут метку снаружи — регистрируем
+    if (!balanceState.pickers) balanceState.pickers = {};
+    balanceState.pickers[balMonthKey(mo.y, mo.m)] = { show: show, days: days };
     svg.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') show(pick(e)); });
     svg.addEventListener('click', e => {
         const i = pick(e);
@@ -866,13 +917,17 @@ function balUpdateReadout(date, bal) {
         && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
     const label = isToday ? 'Баланс на сегодня'
         : 'Баланс на ' + date.getDate() + ' ' + BAL_MONTHS_GEN[date.getMonth()] + ':';
-    el.innerHTML = label + '<strong>' + Math.round(bal).toLocaleString('ru-RU') + ' ₽</strong>';
+    const color = bal < 0 ? ' style="color: var(--tui-red)"' : '';
+    el.innerHTML = label + '<strong' + color + '>' + Math.round(bal).toLocaleString('ru-RU') + ' ₽</strong>';
 }
 
 // Перерисовать ленту по текущему окну месяцев; единая Y-шкала по всем страницам.
 function renderBalanceWindow() {
     const strip = document.getElementById('balanceStrip');
     strip.innerHTML = '';
+    // страницы пересоздаются — старые show-замыкания указывают в никуда
+    balanceState.pickers = {};
+    balanceState.activeMark = null;
     let lo = Infinity;
     let hi = -Infinity;
     balanceState.months.forEach(mo => balMonthPoints(mo.y, mo.m).forEach(p => {
@@ -921,6 +976,10 @@ function balScrollToToday() {
     if (!el) return;
     const dayX = BAL_PAD_L + (t.getDate() - 1) * BAL_DAY_W;
     strip.scrollLeft = Math.max(0, el.offsetLeft + dayX - strip.clientWidth / 2);
+    // метка на сегодняшнем дне + баланс на сегодня в рид-ауте
+    const picker = balanceState.pickers && balanceState.pickers[balMonthKey(t.getFullYear(), t.getMonth())];
+    if (picker) picker.show(Math.min(t.getDate() - 1, picker.days - 1));
+    else balUpdateReadout(t, getCumulativeBalance(t));
 }
 
 // Бесконечность без перерыва. Будущее: добавляем страницы только append'ом —
