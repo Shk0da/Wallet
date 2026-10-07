@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- Перепланирование будильника после перезагрузки -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Фоновая автосинхронизация брокеров (раз в день, без запуска приложения) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:label="@string/app_name"
@@ -34,6 +37,15 @@
         </activity>
 
         <receiver android:name=".NotifyReceiver" android:exported="false" />
+
+        <receiver android:name=".SyncReceiver" android:exported="false" />
+
+        <!-- Невидимый WebView с офлайн-страницей (?autosync=1): sync-client.js
+             синхронизирует брокеров в общий localStorage и зовёт syncDone() -->
+        <service
+            android:name=".SyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

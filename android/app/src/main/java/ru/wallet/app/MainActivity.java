@@ -116,6 +116,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Вызов из onPause система может отбросить: рендерер WebView засыпает
+    // вместе с приложением, и JS не выполняется (проверено на API 34 —
+    // возврат из фона показывал данные без пароля). Перезапираем и здесь:
+    // onResume гонит JS по живому рендереру до того, как пользователь
+    // успеет что-то разглядеть.
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (web != null && web.getVisibility() == View.VISIBLE) {
+            web.evaluateJavascript("if (window.__walletRelock) window.__walletRelock();", null);
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQ_FILE_CHOOSER) {
@@ -261,6 +274,14 @@ public class MainActivity extends Activity {
         public void scheduleNotification(boolean enabled, int hour, int minute) {
             if (enabled) AlarmScheduler.schedule(MainActivity.this, hour, minute);
             else AlarmScheduler.cancel(MainActivity.this);
+        }
+
+        /** Будильник фоновой автосинхронизации (SyncService): срабатывает и когда
+         *  приложение не открывают — settings.js зовёт при сохранении настройки. */
+        @JavascriptInterface
+        public void scheduleAutoSync(boolean enabled, int hour, int minute) {
+            if (enabled) AlarmScheduler.scheduleSync(MainActivity.this, hour, minute);
+            else AlarmScheduler.cancelSync(MainActivity.this);
         }
 
         /** Разрешение на уведомления (Android 13+) — запрашивается в момент включения. */

@@ -73,8 +73,12 @@ if [ "$FONTS_OK" -ne 1 ]; then rm -rf "$OUT/fonts"; fi
 sed -e 's/?v=[0-9][0-9]*//g' \
     "$ROOT/index.html" > "$OUT/index.html"
 
-# standalone.js и sync-client.js — первыми, перед app.js
-sed -i '' 's|<script src="app.js"></script>|<script src="standalone.js"></script>\n    <script src="sync-client.js"></script>\n    <script src="app.js"></script>|' "$OUT/index.html"
+# standalone.js — ПЕРВЫМ скриптом, до auth.js: init() в auth.js синхронно
+# читает window.WALLET_STANDALONE и решает, запирать ли вход; если флаг ещё
+# не установлен, уходит в веб-ветку — и лок на холодном старте не показывается.
+# sync-client.js — перед app.js, как и раньше.
+sed -i '' 's|<script src="auth.js"></script>|<script src="standalone.js"></script>\n    <script src="auth.js"></script>|' "$OUT/index.html"
+sed -i '' 's|<script src="app.js"></script>|<script src="sync-client.js"></script>\n    <script src="app.js"></script>|' "$OUT/index.html"
 
 # index.html ссылается на fonts/fonts.css локально; не собрались шрифты —
 # вырезаем линк целиком (системный фолбэк из font-family)
@@ -84,6 +88,10 @@ fi
 
 grep -q 'standalone.js' "$OUT/index.html" || { echo "ОШИБКА: standalone.js не вставлен" >&2; exit 1; }
 grep -q 'auth\.js' "$OUT/index.html" || { echo "ОШИБКА: auth.js не подключён (локальный пароль)" >&2; exit 1; }
+# standalone.js обязан идти РАНЬШЕ auth.js (см. выше) — иначе пароль на вход
+# в APK молча перестаёт спрашиваться
+awk '/src="standalone\.js"/{s=NR} /src="auth\.js"/{a=NR} END{exit !(s>0 && a>s)}' "$OUT/index.html" \
+    || { echo "ОШИБКА: standalone.js должен подключаться раньше auth.js" >&2; exit 1; }
 
 # ---------- JS ----------
 for f in standalone.js sync-client.js auth.js app.js backup.js settings.js charts.js forecast.js dashboard.js; do

@@ -10,3 +10,6 @@
 //   CSS         — body.standalone прячет .server-only и показывает .standalone-only
 window.WALLET_STANDALONE = true;
 document.body.classList.add('standalone');
+// Если auth.js каким-то образом выполнился раньше нас, его init() не видел
+// флага и ушёл в веб-ветку — перезапустим проверку входа уже в режиме APK
+if (window.WalletAuth && window.WalletAuth.init) window.WalletAuth.init();

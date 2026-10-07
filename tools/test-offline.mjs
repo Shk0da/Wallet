@@ -41,7 +41,7 @@ const FIXTURE = {
 // ---------- Сборка окружения ----------
 
 function makeBridge() {
-    const spy = { http: 0, saveFile: [], persistSnapshot: 0, scheduleNotification: [], requestPerm: 0 };
+    const spy = { http: 0, saveFile: [], persistSnapshot: 0, scheduleNotification: [], scheduleAutoSync: [], syncDone: 0, requestPerm: 0 };
     return {
         spy,
         bridge: {
@@ -50,6 +50,8 @@ function makeBridge() {
             saveFile: (name, content) => { spy.saveFile.push({ name, content }); return true; },
             persistSnapshot: () => { spy.persistSnapshot++; return true; },
             scheduleNotification: (enabled, h, m) => { spy.scheduleNotification.push([enabled, h, m]); },
+            scheduleAutoSync: (enabled, h, m) => { spy.scheduleAutoSync.push([enabled, h, m]); },
+            syncDone: () => { spy.syncDone++; },
             requestNotificationsPermission: () => { spy.requestPerm++; },
             toast: () => {},
             appVersion: () => '1.0-test'
@@ -77,11 +79,11 @@ function bundle(files) {
     return files.map(f => readFileSync(path.join(WWW, f), 'utf8')).join('\n;\n') + epilogue;
 }
 
-async function boot(html, files, { fetchImpl, seed, bridge } = {}) {
+async function boot(html, files, { fetchImpl, seed, bridge, url } = {}) {
     // url с http-origin: у file:// origin «opaque» и localStorage кидает
     // SecurityError (в APK origin — file://, но там настоящий браузер)
     const dom = new JSDOM(readFileSync(html, 'utf8'), {
-        url: 'https://wallet.local/',
+        url: url || 'https://wallet.local/',
         pretendToBeVisual: true, runScripts: 'outside-only'
     });
     const { window } = dom;
@@ -105,7 +107,7 @@ section('Автономный бандл: среда');
 const { spy, bridge } = makeBridge();
 let netAttempts = 0;
 const offlineWindow = await boot(path.join(WWW, 'index.html'),
-    ['standalone.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
+    ['standalone.js', 'auth.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
     {
         fetchImpl: () => { netAttempts++; return Promise.reject(new Error('СЕТЬ ЗАПРЕЩЕНА (offline-тест)')); },
         seed: { financialCalendar: FIXTURE },
@@ -356,6 +358,103 @@ ok(authSrc.indexOf('WALLET_STANDALONE') !== -1 && authSrc.indexOf('__walletReloc
     'auth: APK спрашивает локальный пароль');
 ok(authSrc.indexOf('sessionStorage') === -1,
     'auth: разблокировка — флаг в памяти (закрыл-открыл приложение = снова пароль)');
+
+section('Пароль на вход: лок на холодном старте');
+// Регресс 1.0.6: standalone.js подключался ПОСЛЕ auth.js — синхронный init()
+// не видел window.WALLET_STANDALONE, уходил в веб-ветку, и пароль в APK
+// не запрашивался вообще. Порядок в собранном index.html теперь под контролем.
+const builtIndex = readFileSync(path.join(WWW, 'index.html'), 'utf8');
+ok(builtIndex.indexOf('src="standalone.js"') < builtIndex.indexOf('src="auth.js"'),
+    'сборка: standalone.js подключён раньше auth.js (флаг APK виден init)');
+// Поведение: свежая страница с заданным паролем → экран входа показан
+const lockWindow = await boot(path.join(WWW, 'index.html'), ['standalone.js', 'auth.js'],
+    { seed: { walletSettings: { appPassword: '1234' } } });
+const lockDoc = lockWindow.document;
+const overlayEl = lockDoc.getElementById('loginOverlay');
+ok(!overlayEl.hidden && lockDoc.body.classList.contains('auth-lock')
+    && lockWindow.getComputedStyle(overlayEl).display !== 'none',
+    'холодный старт с паролем: экран входа показан (computed display)');
+ok(lockDoc.getElementById('logoutBtn').hidden === true, 'APK: кнопки выхода нет');
+lockDoc.getElementById('loginPassword').value = '0000';
+lockDoc.getElementById('loginForm').dispatchEvent(
+    new lockWindow.Event('submit', { bubbles: true, cancelable: true }));
+ok(lockDoc.getElementById('loginError').textContent === 'Неверный пароль' && !overlayEl.hidden,
+    'неверный пароль: ошибка, экран остаётся');
+lockDoc.getElementById('loginPassword').value = '1234';
+lockDoc.getElementById('loginForm').dispatchEvent(
+    new lockWindow.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(20);
+ok(overlayEl.hidden && !lockDoc.body.classList.contains('auth-lock'),
+    'верный пароль: экран снят');
+lockWindow.eval('window.__walletRelock()');
+ok(!overlayEl.hidden && lockDoc.body.classList.contains('auth-lock'),
+    '__walletRelock (уход в фон): экран вернулся');
+
+section('Автосинхронизация: фон, без запуска приложения');
+// Будильник (AlarmManager 1002) → SyncReceiver → SyncService с невидимым
+// WebView (?autosync=1): та же страница, тот же localStorage, тот же путь
+// синхронизации, что у кнопки — но без открытого приложения.
+const svcSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/SyncService.java'), 'utf8');
+ok(svcSrc.indexOf('autosync=1') !== -1 && svcSrc.indexOf('syncDone') !== -1
+    && svcSrc.indexOf('startForeground') !== -1,
+    'SyncService: невидимый WebView + syncDone + foreground');
+const recvSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/SyncReceiver.java'), 'utf8');
+ok(recvSrc.indexOf('startForegroundService') !== -1
+    && recvSrc.indexOf('rescheduleFromSnapshot') !== -1,
+    'SyncReceiver: стартует сервис и сразу планирует завтрашний запуск');
+const alarmSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/AlarmScheduler.java'), 'utf8');
+ok(alarmSrc.indexOf('scheduleSync') !== -1 && alarmSrc.indexOf('REQUEST_CODE_SYNC') !== -1
+    && alarmSrc.indexOf('"autoSync"') !== -1,
+    'AlarmScheduler: будильник синхронизации + восстановление из снапшота');
+const manifestSrc = readFileSync(path.join(ROOT, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+ok(manifestSrc.indexOf('.SyncService') !== -1 && manifestSrc.indexOf('dataSync') !== -1
+    && manifestSrc.indexOf('FOREGROUND_SERVICE_DATA_SYNC') !== -1,
+    'манифест: сервис dataSync + права FOREGROUND_SERVICE');
+const mainSrcJava = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
+ok(mainSrcJava.indexOf('scheduleAutoSync') !== -1,
+    'мост: scheduleAutoSync — сохранение настройки ставит будильник');
+const lastAuto = spy.scheduleAutoSync[spy.scheduleAutoSync.length - 1];
+ok(!!lastAuto && lastAuto[0] === true && lastAuto[1] === 6 && lastAuto[2] === 45,
+    'настройки: автосинхронизация 06:45 запланирована через мост');
+ok(syncSrc.indexOf('autosync=1') !== -1 && syncSrc.indexOf('syncDone') !== -1
+    && syncSrc.indexOf('BACKGROUND') !== -1,
+    'sync-client: фоновая ветка ?autosync=1 со signalDone');
+ok(/window\.__walletRunSync = function \(mock\) \{ return runSync/.test(dashSrc),
+    'dashboard: __walletRunSync возвращает промис (фону нужно завершение)');
+// Поведение: страница с ?autosync=1 сама запускает синхронизацию, отмечает
+// день и сигналит сервису; повторный запуск в тот же день — сразу done
+const { spy: spyBg, bridge: bridgeBg } = makeBridge();
+const bgWindow = await boot(path.join(WWW, 'index.html'),
+    ['standalone.js', 'auth.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
+    {
+        fetchImpl: () => Promise.reject(new Error('СЕТЬ ЗАПРЕЩЕНА (offline-тест)')),
+        seed: { walletSettings: { autoSync: { enabled: true, hour: 0, minute: 0 } } },
+        bridge: bridgeBg,
+        url: 'https://wallet.local/?autosync=1'
+    });
+await sleep(2300); // фоновая ветка ждёт 1.5с инициализации приложения
+const t = new Date();
+const todayStr = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2)
+    + '-' + ('0' + t.getDate()).slice(-2);
+ok(spyBg.syncDone >= 1 && bgWindow.localStorage.getItem('walletAutoSyncDate') === todayStr,
+    'фоновая страница: синхронизация запущена, день отмечен, syncDone вызван');
+// Уже синхронизировано сегодня (например, утром сработал будильник, а страницу
+// сервиса перезапустили) — сразу done, без походов к брокерам
+const { spy: spyBg2, bridge: bridgeBg2 } = makeBridge();
+const bgWindow2 = await boot(path.join(WWW, 'index.html'),
+    ['standalone.js', 'auth.js', 'sync-client.js', 'app.js', 'backup.js', 'settings.js', 'charts.js', 'forecast.js', 'dashboard.js'],
+    {
+        fetchImpl: () => Promise.reject(new Error('СЕТЬ ЗАПРЕЩЕНА (offline-тест)')),
+        seed: { walletSettings: { autoSync: { enabled: true, hour: 0, minute: 0 } } },
+        bridge: bridgeBg2,
+        url: 'https://wallet.local/?autosync=1'
+    });
+// ключ дня — сырая строка, не JSON: пишем до срабатывания таймера фоновой ветки
+bgWindow2.localStorage.setItem('walletAutoSyncDate', todayStr);
+await sleep(2300);
+ok(bridgeBg2 && spyBg2.syncDone >= 1 && spyBg2.http === 0,
+    'фоновая страница: день уже отмечен — syncDone без обращений к брокерам');
+
 const javaSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
 ok(javaSrc.indexOf('__walletRelock') !== -1,
     'Java: onPause перезапирает приложение (уход в фон = пароль)');

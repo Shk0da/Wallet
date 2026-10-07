@@ -23,6 +23,16 @@ const WalletAuth = (() => {
         try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
     };
 
+    // Пароль APK из walletSettings (без загрузки всего модуля настроек)
+    const storedAppPassword = () => {
+        try {
+            const raw = localStorage.getItem('walletSettings');
+            if (!raw) return '';
+            const s = JSON.parse(raw);
+            return typeof s.appPassword === 'string' ? s.appPassword : '';
+        } catch (e) { return ''; }
+    };
+
     // --- Обёртка над fetch: добавляет X-Wallet-Auth ко same-origin запросам ---
     // Устанавливается до app.js/dashboard.js, поэтому покрывает все запросы приложения.
     const origFetch = window.fetch ? window.fetch.bind(window) : null;
@@ -177,7 +187,7 @@ const WalletAuth = (() => {
     };
 
     return {
-        show, hide, submit, logout,
+        show, hide, submit, logout, init,
         get enabled() { return authRequired; }
     };
 })();

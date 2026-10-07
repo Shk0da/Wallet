@@ -146,6 +146,15 @@ const WalletSettings = (() => {
                     WalletAndroid.scheduleNotification(n.enabled, n.hour, n.minute);
                 } catch (e) { /* мост недоступен — веб-режим */ }
             }
+            // Будильник фоновой автосинхронизации: срабатывает и без запуска
+            // приложения (AlarmManager → SyncReceiver → SyncService с невидимым
+            // WebView, см. sync-client.js ветку autosync=1)
+            if (window.WalletAndroid && WalletAndroid.scheduleAutoSync) {
+                try {
+                    const a = settings.autoSync;
+                    WalletAndroid.scheduleAutoSync(a.enabled, a.hour, a.minute);
+                } catch (e) { /* мост недоступен — веб-режим */ }
+            }
             if (window.WalletBackup) WalletBackup.persistSnapshot();
             document.dispatchEvent(new CustomEvent('wallet:settings-changed'));
         }

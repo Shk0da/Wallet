@@ -1260,8 +1260,48 @@ window.WalletSync = WalletSync;
 // открыто, время пришло и сегодня автосинка ещё не было — запускаем штатную
 // синхронизацию, ту же, что у кнопки «Обновить» в портфеле. День отмечаем
 // ДО запуска: неудача не должна превращаться в ретраи каждые 30 секунд.
+//
+// ФОНОВЫЙ запуск: ?autosync=1 в адресе значит, что страницу поднял SyncService
+// по будильнику (приложение пользователь не открывал). Время сверять не нужно —
+// будильник уже сработал; после завершения зовём WalletAndroid.syncDone(),
+// чтобы сервис погасил WebView. День отмечаем ПОСЛЕ успешного прогона —
+// ретраев в фоне нет, а неудачная синхронизация должна повториться, когда
+// пользователь откроет приложение.
 (function () {
     const AUTO_SYNC_DATE_KEY = 'walletAutoSyncDate';
+    const BACKGROUND = location.search.indexOf('autosync=1') !== -1;
+
+    function todayKey() {
+        const n = new Date();
+        return n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2)
+            + '-' + ('0' + n.getDate()).slice(-2);
+    }
+
+    function signalDone() {
+        if (window.WalletAndroid && WalletAndroid.syncDone) {
+            try { WalletAndroid.syncDone(); } catch (e) { /* сервис уже погашен */ }
+        }
+    }
+
+    if (BACKGROUND) {
+        setTimeout(function () {
+            try {
+                let last = '';
+                try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный */ }
+                if (last === todayKey() || !window.__walletRunSync) { signalDone(); return; }
+                const p = window.__walletRunSync(false);
+                if (p && typeof p.then === 'function') {
+                    p.then(function () {
+                        try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
+                        signalDone();
+                    }, signalDone);
+                } else {
+                    signalDone();
+                }
+            } catch (e) { signalDone(); }
+        }, 1500); // app.js должен успеть подняться: токены и данные — в localStorage
+        return;
+    }
 
     function autoSyncCheck() {
         let s = null;
@@ -1272,8 +1312,7 @@ window.WalletSync = WalletSync;
         const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
             Math.min(23, parseInt(cfg.hour, 10) || 0), Math.min(59, parseInt(cfg.minute, 10) || 0));
         if (now < target) return;
-        const today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2)
-            + '-' + ('0' + now.getDate()).slice(-2);
+        const today = todayKey();
         let last = '';
         try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный режим */ }
         if (last === today) return;

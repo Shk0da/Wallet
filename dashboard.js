@@ -1462,8 +1462,9 @@
         $('syncBtn').addEventListener('click', () => runSync(false));
         $('emptySyncBtn').addEventListener('click', () => { setView('dashboard'); runSync(false); });
         $('emptyMockBtn').addEventListener('click', () => { setView('dashboard'); runSync(true); });
-        // Автосинхронизация (sync-client.js) зовёт тот же путь, что и кнопка
-        window.__walletRunSync = function (mock) { runSync(!!mock); };
+        // Автосинхронизация (sync-client.js) зовёт тот же путь, что и кнопка;
+        // промис возвращаем — фоновой ветке (?autosync=1) нужно дождаться конца
+        window.__walletRunSync = function (mock) { return runSync(!!mock); };
 
         bindForecastControls();
         initDashboardSwipe();
