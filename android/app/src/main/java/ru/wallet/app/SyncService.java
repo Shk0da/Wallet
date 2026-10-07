@@ -46,13 +46,19 @@ import javax.net.ssl.X509TrustManager;
  * путь, что у кнопки синхронизации. localStorage общий с приложением, поэтому
  * данные брокеров оказываются на месте к следующему запуску.
  *
- * Завершение: JS зовёт WalletAndroid.syncDone() после синхронизации; страхуемся
- * таймаутом 90 с (страница не загрузилась, мост потерялся) и ошибкой загрузки.
+ * Пока идёт синхронизация, висит видимый пуш («Синхронизация брокеров…»),
+ * по завершении JS зовёт WalletAndroid.syncDone(ok, text) и пуш заменяется
+ * итогом («Данные обновлены: …» / причина ошибки); пустой текст — работы не
+ * было, уведомление убирается тихо. Страхуемся таймаутом 90 с (страница не
+ * загрузилась, мост потерялся) и ошибкой загрузки.
  */
 public class SyncService extends Service {
 
     private static final int NOTIF_ID = 43;
-    private static final String CHANNEL_ID = "sync";
+    private static final String CHANNEL_ID = "sync_alert";
+    // канал «sync» из 1.0.7 был создан с IMPORTANCE_LOW — важность живого канала
+    // система поменять не даёт, удаляем и создаём заново с HIGH
+    private static final String CHANNEL_LEGACY = "sync";
     private static final String TAG = "WalletSync";
     private static final long TIMEOUT_MS = 90_000L;
     private static final String START_URL =
@@ -62,7 +68,7 @@ public class SyncService extends Service {
     private boolean finished;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable watchdog = new Runnable() {
-        @Override public void run() { finish(); }
+        @Override public void run() { finish("Превышено время ожидания синхронизации", false); }
     };
 
     @Override
@@ -73,8 +79,9 @@ public class SyncService extends Service {
         super.onCreate();
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null) {
+            nm.deleteNotificationChannel(CHANNEL_LEGACY);
             nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID,
-                    "Синхронизация брокеров", NotificationManager.IMPORTANCE_LOW));
+                    "Синхронизация брокеров", NotificationManager.IMPORTANCE_HIGH));
         }
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL_ID)
@@ -99,7 +106,7 @@ public class SyncService extends Service {
                 public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                     if (req.isForMainFrame()) {
                         Log.w(TAG, "страница не загрузилась: " + err.getDescription());
-                        finish(); // страница не загрузилась — не висим
+                        finish("Страница синхронизации не загрузилась", false);
                     }
                 }
             });
@@ -108,14 +115,18 @@ public class SyncService extends Service {
             Log.i(TAG, "невидимый WebView запущен: " + START_URL);
         } catch (Exception e) {
             Log.e(TAG, "не удалось поднять WebView: " + e.getMessage(), e);
-            finish();
+            finish("Не удалось запустить синхронизацию", false);
             return START_NOT_STICKY;
         }
         handler.postDelayed(watchdog, TIMEOUT_MS);
         return START_NOT_STICKY;
     }
 
-    private void finish() {
+    /**
+     * Гасит сервис. summary — текст итогового пуша (пустой/null — работы не
+     * было, уведомление сервиса убираем без итога); ok — успешный ли итог.
+     */
+    private void finish(String summary, boolean ok) {
         if (finished) return;
         finished = true;
         Log.i(TAG, "остановка сервиса синхронизации");
@@ -125,6 +136,23 @@ public class SyncService extends Service {
                 try { web.stopLoading(); web.destroy(); } catch (Exception ignored) { }
                 web = null;
             }
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            // DETACH: уведомление переживает stopSelf — заменяем его итоговым
+            stopForeground(STOP_FOREGROUND_DETACH);
+            if (nm != null) {
+                if (summary == null || summary.isEmpty()) {
+                    nm.cancel(NOTIF_ID);
+                } else {
+                    Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                            ? new Notification.Builder(this, CHANNEL_ID)
+                            : new Notification.Builder(this);
+                    b.setContentTitle(getString(R.string.app_name))
+                            .setContentText((ok ? "✅ " : "⚠️ ") + summary)
+                            .setSmallIcon(R.drawable.ic_notify)
+                            .setAutoCancel(true);
+                    nm.notify(NOTIF_ID, b.build());
+                }
+            }
             stopSelf();
         });
     }
@@ -133,11 +161,12 @@ public class SyncService extends Service {
     // + syncDone + persistSnapshot (backup.js зовёт его безусловно).
     private class SyncBridge {
 
-        /** Синхронизация завершилась — страницу можно гасить. */
+        /** Синхронизация завершилась — страницу можно гасить, показываем итог. */
         @JavascriptInterface
-        public void syncDone() {
-            Log.i(TAG, "JS завершил синхронизацию (syncDone)");
-            finish();
+        public void syncDone(boolean ok, String summary) {
+            Log.i(TAG, "JS завершил синхронизацию (syncDone): ok=" + ok
+                    + (summary != null && !summary.isEmpty() ? " — " + summary : ""));
+            finish(summary, ok);
         }
 
         /** Зеркалит Bridge.http в MainActivity (тот же формат ответа). */

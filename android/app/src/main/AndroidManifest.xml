@@ -8,8 +8,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Уведомления о платежах дня (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Точное время утреннего уведомления (Android 12+; без него — неточное окно) -->
+    <!-- Точное время будильников. На Android 13+ SCHEDULE_EXACT_ALARM по умолчанию
+         НЕ выдан: будильник молча падал в неточное окно, а стартовать foreground-
+         сервис из него система не даёт — автосинхронизация не запускалась вовсе.
+         USE_EXACT_ALARM (API 33+) выдаётся автоматически, без экрана настроек. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- Перепланирование будильника после перезагрузки -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Фоновая автосинхронизация брокеров (раз в день, без запуска приложения) -->

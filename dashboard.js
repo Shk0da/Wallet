@@ -1144,6 +1144,10 @@
         if (state.syncing) return;
         setSyncUI('run', mock ? 'Генерация демо-данных…' : 'Подключение…');
 
+        // Итог прогона: возвращаем вызывающему (фоновая автосинхронизация
+        // показывает его пушем через WalletAndroid.syncDone)
+        let outcome = { ok: false, text: 'Данные не обновлены' };
+
         // Обработчик событий NDJSON — общий для серверного стрима (sync.php)
         // и автономного пайплайна (WalletSync в APK): формы событий совпадают.
         const brokerErrors = {}; // брокер → текст последней ошибки (для итога)
@@ -1178,6 +1182,7 @@
                 setSyncUI('idle', 'Синхронизация уже запущена в другой вкладке');
                 toast('⏳ Синхронизация уже идёт — подождите');
             } else if (ev.event === 'error') {
+                outcome = { ok: false, text: ev.message || 'Ошибка синхронизации' };
                 setSyncUI('error', 'Ошибка: ' + (ev.message || 'неизвестная'));
                 toast('❌ ' + (ev.message || 'Ошибка синхронизации'));
             } else if (ev.event === 'done') {
@@ -1185,6 +1190,11 @@
                 const pf = ev.portfolio || {};
                 const failed = Object.keys(brokerErrors);
                 if (ev.saved) {
+                    if (failed.length) {
+                        outcome = { ok: true, text: 'Обновлено без ' + failed.map(b => BROKER_TITLES[b]).join(', ') };
+                    } else {
+                        outcome = { ok: true, text: 'Данные обновлены' + (pf.value != null ? ': ' + Charts.fmt.compact(pf.value) : '') };
+                    }
                     setSyncUI('idle', 'Синхронизация завершена' +
                         (pf.value != null ? ' · стоимость ' + Charts.fmt.compact(pf.value) : ''));
                     if (failed.length) {
@@ -1196,6 +1206,7 @@
                     }
                     loadPortfolio();
                 } else {
+                    outcome = { ok: false, text: ev.message || 'Данные не сохранены' };
                     setSyncUI('error', ev.message || 'Данные не сохранены');
                     toast('⚠️ ' + (ev.message || 'Не удалось сохранить данные'));
                     if (!state.portfolio) loadPortfolio(); // мог создаться файл, а у нас его нет
@@ -1208,16 +1219,17 @@
             if (!window.WalletSync) {
                 setSyncUI('error', 'Модуль синхронизации недоступен');
                 toast('❌ Модуль синхронизации недоступен');
-                return;
+                return outcome;
             }
             try {
                 await WalletSync.runSync(mock, handle);
                 if (state.syncing) setSyncUI('idle', 'Синхронизация завершена');
             } catch (e) {
+                outcome = { ok: false, text: 'Ошибка: ' + (e && e.message ? e.message : 'неизвестная') };
                 setSyncUI('error', 'Ошибка: ' + (e && e.message ? e.message : 'неизвестная'));
                 toast('❌ Ошибка синхронизации');
             }
-            return;
+            return outcome;
         }
 
         try {
@@ -1228,9 +1240,10 @@
                 body: JSON.stringify({ mock: !!mock })
             });
             if (resp.status === 401) {
+                outcome = { ok: false, text: 'Требуется вход' };
                 setSyncUI('idle', 'Требуется вход');
                 if (window.WalletAuth) WalletAuth.show();
-                return;
+                return outcome;
             }
             if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
 
@@ -1251,9 +1264,11 @@
             handle(buffer);
             if (state.syncing) setSyncUI('idle', 'Синхронизация завершена');
         } catch (e) {
+            outcome = { ok: false, text: 'Ошибка соединения: ' + e.message };
             setSyncUI('error', 'Ошибка соединения: ' + e.message);
             toast('❌ Ошибка соединения с сервером');
         }
+        return outcome;
     }
 
     // ---------- Свайп между видами (только на дашборде) ----------

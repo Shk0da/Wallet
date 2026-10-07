@@ -64,6 +64,12 @@ const WalletAuth = (() => {
         if (err) err.textContent = message || '';
         const inp = document.getElementById('loginPassword');
         if (inp) setTimeout(() => { try { inp.focus(); } catch (e) { /* jsdom */ } }, 50);
+        // submit() гасит кнопку на время проверки и после УСПЕШНОГО входа не
+        // возвращает её (страница в APK дальше живёт, а не перезагружается) —
+        // при следующем перезапирании замок был бы с мёртвой кнопкой.
+        // Каждое появление замка = активная кнопка.
+        const sb = document.getElementById('loginSubmit');
+        if (sb) sb.disabled = false;
     }
 
     function hide() {
@@ -85,6 +91,7 @@ const WalletAuth = (() => {
         if (standalone()) {
             if (inp.value !== '' && inp.value === storedAppPassword()) {
                 appUnlocked = true;
+                btn.disabled = false; // следующее запирание начнёт с живой кнопки
                 hide();
             } else {
                 err.textContent = 'Неверный пароль';

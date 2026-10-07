@@ -287,8 +287,10 @@ const WalletSettings = (() => {
             autoSync: { enabled: autoOn, hour: autoT.hour, minute: autoT.minute }
         });
 
-        // Разрешение на уведомления запрашиваем в момент включения (Android 13+)
-        if (enabled && window.WalletAndroid && WalletAndroid.requestNotificationsPermission) {
+        // Разрешение на уведомления запрашиваем при включении любой фичи,
+        // которая их показывает: утреннее уведомление ИЛИ автосинхронизация —
+        // её итоговый пуш без разрешения молча пропадает
+        if ((enabled || autoOn) && window.WalletAndroid && WalletAndroid.requestNotificationsPermission) {
             try { WalletAndroid.requestNotificationsPermission(); } catch (e) { /* не APK */ }
         }
         if (window.toast) toast('Настройки сохранены');

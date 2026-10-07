@@ -1263,10 +1263,10 @@ window.WalletSync = WalletSync;
 //
 // ФОНОВЫЙ запуск: ?autosync=1 в адресе значит, что страницу поднял SyncService
 // по будильнику (приложение пользователь не открывал). Время сверять не нужно —
-// будильник уже сработал; после завершения зовём WalletAndroid.syncDone(),
-// чтобы сервис погасил WebView. День отмечаем ПОСЛЕ успешного прогона —
-// ретраев в фоне нет, а неудачная синхронизация должна повториться, когда
-// пользователь откроет приложение.
+// будильник уже сработал; после завершения зовём WalletAndroid.syncDone(ok, text),
+// чтобы сервис погасил WebView и показал итоговый пуш (пустой текст — пуши нет).
+// День отмечаем ПОСЛЕ успешного прогона — ретраев в фоне нет, а неудачная
+// синхронизация должна повториться, когда пользователь откроет приложение.
 (function () {
     const AUTO_SYNC_DATE_KEY = 'walletAutoSyncDate';
     const BACKGROUND = location.search.indexOf('autosync=1') !== -1;
@@ -1277,9 +1277,10 @@ window.WalletSync = WalletSync;
             + '-' + ('0' + n.getDate()).slice(-2);
     }
 
-    function signalDone() {
+    // ok — успешная ли синхронизация, text — текст итогового пуша
+    function signalDone(ok, text) {
         if (window.WalletAndroid && WalletAndroid.syncDone) {
-            try { WalletAndroid.syncDone(); } catch (e) { /* сервис уже погашен */ }
+            try { WalletAndroid.syncDone(ok === true, text || ''); } catch (e) { /* сервис уже погашен */ }
         }
     }
 
@@ -1288,17 +1289,19 @@ window.WalletSync = WalletSync;
             try {
                 let last = '';
                 try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный */ }
-                if (last === todayKey() || !window.__walletRunSync) { signalDone(); return; }
+                if (last === todayKey() || !window.__walletRunSync) { signalDone(false, ''); return; }
                 const p = window.__walletRunSync(false);
                 if (p && typeof p.then === 'function') {
-                    p.then(function () {
+                    p.then(function (res) {
                         try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
-                        signalDone();
-                    }, signalDone);
+                        signalDone(!!(res && res.ok), res && res.text ? res.text : '');
+                    }, function () {
+                        signalDone(false, 'Ошибка синхронизации');
+                    });
                 } else {
-                    signalDone();
+                    signalDone(false, '');
                 }
-            } catch (e) { signalDone(); }
+            } catch (e) { signalDone(false, 'Ошибка синхронизации'); }
         }, 1500); // app.js должен успеть подняться: токены и данные — в localStorage
         return;
     }

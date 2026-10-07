@@ -41,7 +41,7 @@ const FIXTURE = {
 // ---------- Сборка окружения ----------
 
 function makeBridge() {
-    const spy = { http: 0, saveFile: [], persistSnapshot: 0, scheduleNotification: [], scheduleAutoSync: [], syncDone: 0, requestPerm: 0 };
+    const spy = { http: 0, saveFile: [], persistSnapshot: 0, scheduleNotification: [], scheduleAutoSync: [], syncDone: 0, syncDoneArgs: [], requestPerm: 0 };
     return {
         spy,
         bridge: {
@@ -51,7 +51,7 @@ function makeBridge() {
             persistSnapshot: () => { spy.persistSnapshot++; return true; },
             scheduleNotification: (enabled, h, m) => { spy.scheduleNotification.push([enabled, h, m]); },
             scheduleAutoSync: (enabled, h, m) => { spy.scheduleAutoSync.push([enabled, h, m]); },
-            syncDone: () => { spy.syncDone++; },
+            syncDone: (ok, summary) => { spy.syncDone++; spy.syncDoneArgs.push([ok, summary]); },
             requestNotificationsPermission: () => { spy.requestPerm++; },
             toast: () => {},
             appVersion: () => '1.0-test'
@@ -389,6 +389,11 @@ ok(overlayEl.hidden && !lockDoc.body.classList.contains('auth-lock'),
 lockWindow.eval('window.__walletRelock()');
 ok(!overlayEl.hidden && lockDoc.body.classList.contains('auth-lock'),
     '__walletRelock (уход в фон): экран вернулся');
+// Регресс 1.0.7: submit() гасил «Войти» на время проверки и не возвращал
+// после УСПЕШНОГО входа — перезапирание после разблокировки телефона
+// показывало замок с мёртвой кнопкой
+ok(lockDoc.getElementById('loginSubmit').disabled === false,
+    'перезапирание: кнопка «Войти» активна после успешного входа');
 
 section('Автосинхронизация: фон, без запуска приложения');
 // Будильник (AlarmManager 1002) → SyncReceiver → SyncService с невидимым
@@ -398,6 +403,9 @@ const svcSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet
 ok(svcSrc.indexOf('autosync=1') !== -1 && svcSrc.indexOf('syncDone') !== -1
     && svcSrc.indexOf('startForeground') !== -1,
     'SyncService: невидимый WebView + syncDone + foreground');
+ok(svcSrc.indexOf('IMPORTANCE_HIGH') !== -1 && svcSrc.indexOf('deleteNotificationChannel') !== -1
+    && svcSrc.indexOf('setAutoCancel') !== -1 && svcSrc.indexOf('STOP_FOREGROUND_DETACH') !== -1,
+    'SyncService: пуш — канал HIGH (замена тихого LOW) + итог с автодисмиссом');
 const recvSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/SyncReceiver.java'), 'utf8');
 ok(recvSrc.indexOf('startForegroundService') !== -1
     && recvSrc.indexOf('rescheduleFromSnapshot') !== -1,
@@ -410,6 +418,13 @@ const manifestSrc = readFileSync(path.join(ROOT, 'android/app/src/main/AndroidMa
 ok(manifestSrc.indexOf('.SyncService') !== -1 && manifestSrc.indexOf('dataSync') !== -1
     && manifestSrc.indexOf('FOREGROUND_SERVICE_DATA_SYNC') !== -1,
     'манифест: сервис dataSync + права FOREGROUND_SERVICE');
+// Регресс 1.0.7: на Android 13+ SCHEDULE_EXACT_ALARM по умолчанию НЕ выдан —
+// будильник молча падал в неточный, а foreground-сервис из неточного будильника
+// система стартовать не даёт (mAllowStartForeground false) — синхронизации нет
+ok(manifestSrc.indexOf('USE_EXACT_ALARM') !== -1,
+    'манифест: USE_EXACT_ALARM — точный будильник без экрана настроек');
+ok(/enabled \|\| autoOn/.test(readFileSync(path.join(ROOT, 'settings.js'), 'utf8')),
+    'настройки: разрешение уведомлений просят и за автосинхронизацию (итоговый пуш)');
 const mainSrcJava = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
 ok(mainSrcJava.indexOf('scheduleAutoSync') !== -1,
     'мост: scheduleAutoSync — сохранение настройки ставит будильник');
@@ -421,6 +436,8 @@ ok(syncSrc.indexOf('autosync=1') !== -1 && syncSrc.indexOf('syncDone') !== -1
     'sync-client: фоновая ветка ?autosync=1 со signalDone');
 ok(/window\.__walletRunSync = function \(mock\) \{ return runSync/.test(dashSrc),
     'dashboard: __walletRunSync возвращает промис (фону нужно завершение)');
+ok(dashSrc.indexOf('return outcome') !== -1 && dashSrc.indexOf('Данные обновлены') !== -1,
+    'dashboard: runSync возвращает итог {ok, text} — текст для пуша');
 // Поведение: страница с ?autosync=1 сама запускает синхронизацию, отмечает
 // день и сигналит сервису; повторный запуск в тот же день — сразу done
 const { spy: spyBg, bridge: bridgeBg } = makeBridge();
@@ -438,6 +455,11 @@ const todayStr = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2)
     + '-' + ('0' + t.getDate()).slice(-2);
 ok(spyBg.syncDone >= 1 && bgWindow.localStorage.getItem('walletAutoSyncDate') === todayStr,
     'фоновая страница: синхронизация запущена, день отмечен, syncDone вызван');
+// Итог передаётся в сервис для пуша: токенов нет → saved:false, текст причины
+const lastDone = spyBg.syncDoneArgs[spyBg.syncDoneArgs.length - 1];
+ok(!!lastDone && lastDone[0] === false
+    && lastDone[1] === 'Нет настроенных брокеров — задайте токены в настройках',
+    'фоновая страница: текст итога передан в syncDone (для пуша)');
 // Уже синхронизировано сегодня (например, утром сработал будильник, а страницу
 // сервиса перезапустили) — сразу done, без походов к брокерам
 const { spy: spyBg2, bridge: bridgeBg2 } = makeBridge();
@@ -454,6 +476,9 @@ bgWindow2.localStorage.setItem('walletAutoSyncDate', todayStr);
 await sleep(2300);
 ok(bridgeBg2 && spyBg2.syncDone >= 1 && spyBg2.http === 0,
     'фоновая страница: день уже отмечен — syncDone без обращений к брокерам');
+const lastDone2 = spyBg2.syncDoneArgs[spyBg2.syncDoneArgs.length - 1];
+ok(!!lastDone2 && lastDone2[1] === '',
+    'фоновая страница: работы не было — пустой итог (пуш не показываем)');
 
 const javaSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
 ok(javaSrc.indexOf('__walletRelock') !== -1,
