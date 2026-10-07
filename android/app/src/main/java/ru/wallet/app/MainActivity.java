@@ -105,6 +105,17 @@ public class MainActivity extends Activity {
         AlarmScheduler.rescheduleFromSnapshot(this);
     }
 
+    // Пароль на вход: уход в фон = запирание (auth.js перезапирает оверлей).
+    // Иначе процесс WebView переживает закрытие активности, и «закрыл-открыл»
+    // приложение показывало данные без пароля.
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (web != null) {
+            web.evaluateJavascript("if (window.__walletRelock) window.__walletRelock();", null);
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQ_FILE_CHOOSER) {

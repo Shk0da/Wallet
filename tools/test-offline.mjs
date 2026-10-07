@@ -352,8 +352,13 @@ ok(syncSrc.indexOf('function autoSyncCheck') !== -1
 ok(dashSrc.indexOf('window.__walletRunSync') !== -1,
     'dashboard: кнопка и автосинхронизация — один путь запуска');
 const authSrc = readFileSync(path.join(WWW, 'auth.js'), 'utf8');
-ok(authSrc.indexOf('WALLET_STANDALONE') !== -1 && authSrc.indexOf('walletUnlocked') !== -1,
-    'auth: APK спрашивает локальный пароль (разблокировка на запуск)');
+ok(authSrc.indexOf('WALLET_STANDALONE') !== -1 && authSrc.indexOf('__walletRelock') !== -1,
+    'auth: APK спрашивает локальный пароль');
+ok(authSrc.indexOf('sessionStorage') === -1,
+    'auth: разблокировка — флаг в памяти (закрыл-открыл приложение = снова пароль)');
+const javaSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/MainActivity.java'), 'utf8');
+ok(javaSrc.indexOf('__walletRelock') !== -1,
+    'Java: onPause перезапирает приложение (уход в фон = пароль)');
 const lastNotif = spy.scheduleNotification[spy.scheduleNotification.length - 1];
 ok(spy.scheduleNotification.length >= 1 && lastNotif[0] === true
     && lastNotif[1] === 7 && lastNotif[2] === 30,
