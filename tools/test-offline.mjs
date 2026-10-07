@@ -406,6 +406,16 @@ ok(svcSrc.indexOf('autosync=1') !== -1 && svcSrc.indexOf('syncDone') !== -1
 ok(svcSrc.indexOf('IMPORTANCE_HIGH') !== -1 && svcSrc.indexOf('deleteNotificationChannel') !== -1
     && svcSrc.indexOf('setAutoCancel') !== -1 && svcSrc.indexOf('STOP_FOREGROUND_DETACH') !== -1,
     'SyncService: пуш — канал HIGH (замена тихого LOW) + итог с автодисмиссом');
+// Регресс 1.0.8 (телефон): FGS не держит процессор — экран выключен, телефон
+// в Doze: ресивер будит CPU на ~10с, дальше WebView-JS замерзал на полпути,
+// syncDone не приходил и пуш «Синхронизация брокеров…» висел вечно
+ok(svcSrc.indexOf('PARTIAL_WAKE_LOCK') !== -1 && svcSrc.indexOf('wakeLock.acquire') !== -1
+    && svcSrc.indexOf('wakeLock.release') !== -1,
+    'SyncService: WakeLock держит CPU до конца синхронизации');
+ok(svcSrc.indexOf('300_000L') !== -1,
+    'SyncService: таймаут 5 мин (два брокера дольше 90 с)');
+ok(svcSrc.indexOf('onConsoleMessage') !== -1 && svcSrc.indexOf('onPageFinished') !== -1,
+    'SyncService: JS-консоль и загрузка страницы — в logcat (диагностика)');
 const recvSrc = readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/SyncReceiver.java'), 'utf8');
 ok(recvSrc.indexOf('startForegroundService') !== -1
     && recvSrc.indexOf('rescheduleFromSnapshot') !== -1,
@@ -418,6 +428,8 @@ const manifestSrc = readFileSync(path.join(ROOT, 'android/app/src/main/AndroidMa
 ok(manifestSrc.indexOf('.SyncService') !== -1 && manifestSrc.indexOf('dataSync') !== -1
     && manifestSrc.indexOf('FOREGROUND_SERVICE_DATA_SYNC') !== -1,
     'манифест: сервис dataSync + права FOREGROUND_SERVICE');
+ok(manifestSrc.indexOf('WAKE_LOCK') !== -1,
+    'манифест: право WAKE_LOCK (CPU не спит во время синхронизации)');
 // Регресс 1.0.7: на Android 13+ SCHEDULE_EXACT_ALARM по умолчанию НЕ выдан —
 // будильник молча падал в неточный, а foreground-сервис из неточного будильника
 // система стартовать не даёт (mAllowStartForeground false) — синхронизации нет

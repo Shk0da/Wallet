@@ -1289,16 +1289,25 @@ window.WalletSync = WalletSync;
             try {
                 let last = '';
                 try { last = localStorage.getItem(AUTO_SYNC_DATE_KEY) || ''; } catch (e) { /* приватный */ }
-                if (last === todayKey() || !window.__walletRunSync) { signalDone(false, ''); return; }
+                if (last === todayKey() || !window.__walletRunSync) {
+                    console.log('[autosync] работы нет: ' + (last === todayKey() ? 'уже синхронизировано' : 'нет __walletRunSync'));
+                    signalDone(false, '');
+                    return;
+                }
+                console.log('[autosync] запуск фоновой синхронизации');
                 const p = window.__walletRunSync(false);
                 if (p && typeof p.then === 'function') {
                     p.then(function (res) {
                         try { localStorage.setItem(AUTO_SYNC_DATE_KEY, todayKey()); } catch (e) {}
+                        console.log('[autosync] итог: ok=' + !!(res && res.ok)
+                            + ' text=' + (res && res.text ? res.text : ''));
                         signalDone(!!(res && res.ok), res && res.text ? res.text : '');
-                    }, function () {
+                    }, function (err) {
+                        console.log('[autosync] сбой: ' + (err && err.message ? err.message : err));
                         signalDone(false, 'Ошибка синхронизации');
                     });
                 } else {
+                    console.log('[autosync] __walletRunSync не дал промис');
                     signalDone(false, '');
                 }
             } catch (e) { signalDone(false, 'Ошибка синхронизации'); }

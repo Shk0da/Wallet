@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
@@ -46,11 +47,18 @@ import javax.net.ssl.X509TrustManager;
  * путь, что у кнопки синхронизации. localStorage общий с приложением, поэтому
  * данные брокеров оказываются на месте к следующему запуску.
  *
+ * foreground-сервис НЕ держит процессор: будильник будит телефон только на
+ * ~10 с ресивера. Дальше CPU может уснуть (экран выключен, Doze) — JS WebView
+ * замерзал бы на полпути, syncDone не приходил, пуш висел «Синхронизация
+ * брокеров…» вечно. Поэтому держим partial WakeLock до конца работы.
+ *
  * Пока идёт синхронизация, висит видимый пуш («Синхронизация брокеров…»),
  * по завершении JS зовёт WalletAndroid.syncDone(ok, text) и пуш заменяется
  * итогом («Данные обновлены: …» / причина ошибки); пустой текст — работы не
- * было, уведомление убирается тихо. Страхуемся таймаутом 90 с (страница не
- * загрузилась, мост потерялся) и ошибкой загрузки.
+ * было, уведомление убирается тихо. Страхуемся таймаутом 5 мин (страница не
+ * загрузилась, мост потерялся; два брокера честно синхронизируются дольше
+ * полутора минут) и ошибкой загрузки. JS-консоль страницы и ход загрузки
+ * дублируются в logcat (тег WalletSync) — диагностика на реальном телефоне.
  */
 public class SyncService extends Service {
 
@@ -60,11 +68,12 @@ public class SyncService extends Service {
     // система поменять не даёт, удаляем и создаём заново с HIGH
     private static final String CHANNEL_LEGACY = "sync";
     private static final String TAG = "WalletSync";
-    private static final long TIMEOUT_MS = 90_000L;
+    private static final long TIMEOUT_MS = 300_000L;
     private static final String START_URL =
             "file:///android_asset/www/index.html?autosync=1";
 
     private WebView web;
+    private PowerManager.WakeLock wakeLock;
     private boolean finished;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable watchdog = new Runnable() {
@@ -77,6 +86,13 @@ public class SyncService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        // держим CPU до конца синхронизации (withTimeout — страховка от утечки)
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "wallet:autosync");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire(TIMEOUT_MS + 60_000L);
+        }
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26 && nm != null) {
             nm.deleteNotificationChannel(CHANNEL_LEGACY);
@@ -103,11 +119,31 @@ public class SyncService extends Service {
             s.setAllowFileAccess(true);
             web.setWebViewClient(new WebViewClient() {
                 @Override
+                public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                    Log.i(TAG, "страница начинает грузиться: " + url);
+                }
+
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    Log.i(TAG, "страница загружена: " + url);
+                }
+
+                @Override
                 public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                     if (req.isForMainFrame()) {
                         Log.w(TAG, "страница не загрузилась: " + err.getDescription());
                         finish("Страница синхронизации не загрузилась", false);
                     }
+                }
+            });
+            // JS-консоль страницы → logcat: ошибки фоновой синхронизации видны
+            // на реальном телефоне, где иначе диагностики нет
+            web.setWebChromeClient(new android.webkit.WebChromeClient() {
+                @Override
+                public boolean onConsoleMessage(android.webkit.ConsoleMessage msg) {
+                    Log.d(TAG, "[js] " + msg.message() + " (" + msg.sourceId()
+                            + ":" + msg.lineNumber() + ")");
+                    return true;
                 }
             });
             web.addJavascriptInterface(new SyncBridge(), "WalletAndroid");
@@ -135,6 +171,10 @@ public class SyncService extends Service {
             if (web != null) {
                 try { web.stopLoading(); web.destroy(); } catch (Exception ignored) { }
                 web = null;
+            }
+            if (wakeLock != null && wakeLock.isHeld()) {
+                try { wakeLock.release(); } catch (Exception ignored) { }
+                wakeLock = null;
             }
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             // DETACH: уведомление переживает stopSelf — заменяем его итоговым
@@ -173,10 +213,13 @@ public class SyncService extends Service {
         @JavascriptInterface
         public String http(String requestJson) {
             JSONObject resp = new JSONObject();
+            long startedAt = System.currentTimeMillis();
+            String method = "GET";
+            String urlStr = "";
             try {
                 JSONObject req = new JSONObject(requestJson);
-                String method = req.optString("method", "GET");
-                String urlStr = req.optString("url", "");
+                method = req.optString("method", "GET");
+                urlStr = req.optString("url", "");
                 String body = req.isNull("body") ? null : req.optString("body", null);
                 int timeoutMs = Math.max(5000, req.optInt("timeoutMs", 30000));
                 boolean trustAll = req.optBoolean("trustAll", true);
@@ -214,6 +257,8 @@ public class SyncService extends Service {
                         ? conn.getInputStream() : conn.getErrorStream());
                 resp.put("status", status);
                 resp.put("body", text);
+                Log.d(TAG, "http " + method + " " + hostOf(urlStr) + " → " + status
+                        + " (" + (System.currentTimeMillis() - startedAt) + " мс)");
             } catch (Exception e) {
                 try {
                     resp.put("status", 0);
@@ -261,6 +306,15 @@ public class SyncService extends Service {
                 conn.setHostnameVerifier((hostname, session) -> true);
             } catch (Exception e) {
                 // не удалось переопределить — останется системная проверка
+            }
+        }
+
+        private String hostOf(String url) {
+            try {
+                java.net.URI u = java.net.URI.create(url);
+                return u.getHost() + u.getPath();
+            } catch (Exception e) {
+                return url.length() > 60 ? url.substring(0, 60) + "…" : url;
             }
         }
 

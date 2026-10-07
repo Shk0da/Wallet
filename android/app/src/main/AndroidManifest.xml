@@ -19,6 +19,10 @@
     <!-- Фоновая автосинхронизация брокеров (раз в день, без запуска приложения) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- foreground-сервис НЕ держит процессор: будильник будит телефон на ~10с
+         ресивера, дальше CPU может уснуть и WebView-JS замерзнет на полпути.
+         WakeLock держит устройство бодрым до конца синхронизации -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:label="@string/app_name"
