@@ -336,6 +336,23 @@ public class MainActivity extends Activity {
             }
         }
 
+        /**
+         * Чтение снапшота обратно в JS — зеркало SyncBridge.getSnapshot:
+         * localStorage живой страницы отстаёт от диска (Chromium коммитит
+         * лениво), а снапшот мост persistSnapshot пишет синхронно.
+         * dashboard.__walletOnResume лечит им портфель после фоновой
+         * синхронизации. Пустая строка = файла нет (JS трактует её как null).
+         */
+        @JavascriptInterface
+        public String getSnapshot() {
+            try {
+                JSONObject snap = AlarmScheduler.readSnapshot(MainActivity.this);
+                return snap == null ? "" : snap.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         @JavascriptInterface
         public void scheduleNotification(boolean enabled, int hour, int minute) {
             if (enabled) AlarmScheduler.schedule(MainActivity.this, hour, minute);
