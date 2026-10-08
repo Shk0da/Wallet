@@ -54,7 +54,8 @@
         inflationTouched: false, // двигал ли пользователь слайдер инфляции
         htSort: { key: 'value', dir: -1 }, // сортировка таблицы активов
         htExpanded: false,     // показаны все активы (а не первые 15)
-        htQuery: ''            // поисковый фильтр таблицы
+        htQuery: '',           // поисковый фильтр таблицы
+        htAccount: ''          // фильтр таблицы по счёту ('' = все)
     };
 
     // ---------- Мелкие хелперы ----------
@@ -172,6 +173,27 @@
 
     // ---------- Рендер ----------
 
+    // Фоновая синхронизация (SyncService) пишет портфель в рендерер СВОЕГО
+    // WebView, а эта страница держит устаревшую копию localStorage в памяти —
+    // «Последняя синхронизация» не обновлялась до перезапуска приложения.
+    // Снапшот-файл всегда свежий (мост persistSnapshot пишет синхронно после
+    // каждого прогона) — если он новее нашего localStorage, лечим из него.
+    // onResume приложения зовёт этот же хук (MainActivity → __walletOnResume).
+    function healPortfolioFromSnapshot() {
+        if (!window.WALLET_STANDALONE || !window.WalletAndroid || !WalletAndroid.getSnapshot) return;
+        let snap = null;
+        try { snap = JSON.parse(WalletAndroid.getSnapshot() || 'null'); } catch (e) { return; }
+        const sp = snap && snap.portfolio;
+        if (!sp || !sp.meta || !sp.meta.generatedAt) return;
+        let cur = null;
+        try { cur = JSON.parse(localStorage.getItem('walletPortfolio') || 'null'); } catch (e) { cur = null; }
+        const curAt = cur && cur.meta && cur.meta.generatedAt ? Date.parse(cur.meta.generatedAt) : 0;
+        if (!(Date.parse(sp.meta.generatedAt) > curAt)) return;
+        try { localStorage.setItem('walletPortfolio', JSON.stringify(sp)); } catch (e) { return; }
+        console.log('[dashboard] портфель обновлён из снапшота (лечим отставание localStorage)');
+        loadPortfolio();
+    }
+
     function renderPortfolio() {
         const empty = $('dashboardEmpty'), content = $('dashboardContent');
         const p = state.portfolio;
@@ -190,6 +212,7 @@
         renderSectors(p);
         renderPaymentsChart(p);
         renderPaymentsCalendar(p);
+        renderAccountFilter(p);
         renderHoldingsTable(p);
         renderAccounts(p);
         renderGoal(p);
@@ -571,13 +594,55 @@
         { key: 'brokers', label: 'Брокеры', sortable: false }
     ];
 
+    // Чипы счетов над таблицей активов: «Все счета» + непустые счета.
+    // Брокер ≠ счёт (у Т-Инвест их несколько): фильтр режет таблицу по
+    // holding.accountQty — количеству позиции именно на этом счёте.
+    function accountChipLabel(a) {
+        if (a.name) return a.name;
+        return (BROKER_TITLES[a.broker] || a.broker) + ' · ' + String(a.id || '').slice(-6);
+    }
+
+    function renderAccountFilter(p) {
+        const box = $('accFilter');
+        if (!box) return;
+        const accounts = (p.accounts || []).filter(a => !isEmptyAccount(a));
+        // разбивка по счетам появляется после первой синхронизации новой
+        // версией; старые данные без accountQty фильтровать нечем — прячем
+        const hasSplit = (p.holdings || []).some(h => h.accountQty && Object.keys(h.accountQty).length > 0);
+        box.hidden = !hasSplit || accounts.length === 0;
+        if (box.hidden) return;
+        // сохранённый счёт мог исчезнуть (счёт закрыт) — сбрасываем в «все»
+        if (state.htAccount && !accounts.some(a => a.id === state.htAccount)) state.htAccount = '';
+        box.textContent = '';
+        const mk = (id, label, broker) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'acc-chip' + (state.htAccount === id ? ' active' : '');
+            chip.dataset.account = id;
+            const dot = document.createElement('span');
+            dot.className = 'chip-dot';
+            dot.style.background = broker ? (Charts.BROKER_COLORS[broker] || '#E1E3E4') : 'var(--tui-text-3)';
+            chip.append(dot, document.createTextNode(label));
+            chip.addEventListener('click', () => {
+                state.htAccount = id;
+                state.htExpanded = false;
+                try { localStorage.setItem('walletHtAccount', id); } catch (e) { /* приватный */ }
+                renderAccountFilter(state.portfolio);
+                renderHoldingsTable(state.portfolio);
+            });
+            box.appendChild(chip);
+        };
+        mk('', 'Все счета', null);
+        for (const a of accounts) mk(a.id, accountChipLabel(a), a.broker);
+    }
+
     function renderHoldingsTable(p) {
         const container = $('holdingsTable');
         if (!container) return;
         container.textContent = '';
         const all = p.holdings || [];
-        $('htCount').textContent = String(all.length);
         if (all.length === 0) {
+            $('htCount').textContent = '0';
             const note = document.createElement('p');
             note.className = 'chart-note';
             note.textContent = 'Нет позиций.';
@@ -586,28 +651,52 @@
         }
         const total = all.reduce((s, h) => s + (h.value || 0), 0);
         const q = state.htQuery.trim().toLowerCase();
-        const list = all.map(h => {
+        const accId = state.htAccount;
+        // при выборе счёта колонки пересчитываются на ДОЛЮ позиции на этом
+        // счёте: количество/стоимость/прибыль — по accountQty, а не по брокеру
+        const mapped = [];
+        for (const h of all) {
+            let qty = h.quantity;
+            let part = 1;  // доля позиции на выбранном счёте
+            if (accId) {
+                qty = h.accountQty ? (h.accountQty[accId] || 0) : 0;
+                if (qty <= 0) continue;
+                part = h.quantity > 0 ? qty / h.quantity : 0;
+            }
             const nextPays = (h.payments || []).filter(x => x.date && x.amountPerUnit > 0 && x.date >= todayISO());
             nextPays.sort((a, b) => a.date < b.date ? -1 : 1);
             const next = nextPays[0];
-            return {
+            mapped.push({
                 raw: h,
                 name: h.name || h.ticker || '—',
                 ticker: h.ticker || '',
                 type: h.instrumentType || '',
-                quantity: h.quantity,
+                quantity: qty,
                 avgPrice: h.avgPrice,
-                cost: h.cost,
-                value: h.value,
-                pnl: h.pnl,
+                cost: (h.cost || 0) * part,
+                value: (h.value || 0) * part,
+                pnl: h.pnl != null ? h.pnl * part : null,
                 pnlPct: h.pnlPct,
-                share: total > 0 ? (h.value || 0) / total * 100 : 0,
+                share: 0,  // ниже: доля от суммы видимых строк
                 yieldPct: h.value > 0 && h.paymentsNext12m > 0 ? h.paymentsNext12m / h.value * 100 : null,
                 nextPay: next ? next.date : null,
-                nextPayAmount: next ? (next.amountPerUnit || 0) * (h.quantity || 0) : null,
+                nextPayAmount: next ? (next.amountPerUnit || 0) * (qty || 0) : null,
                 brokers: h.sources || []
-            };
-        }).filter(h => !q || h.name.toLowerCase().includes(q) || h.ticker.toLowerCase().includes(q));
+            });
+        }
+        const list = mapped.filter(h => !q || h.name.toLowerCase().includes(q) || h.ticker.toLowerCase().includes(q));
+        // доля: без счёта — от всего портфеля (как раньше), со счётом —
+        // структура именно этого счёта (сумма видимых строк = 100%)
+        const shareTotal = accId ? list.reduce((s, h) => s + (h.value || 0), 0) : total;
+        for (const h of list) h.share = shareTotal > 0 ? (h.value || 0) / shareTotal * 100 : 0;
+        $('htCount').textContent = String(list.length);
+        if (list.length === 0) {
+            const note = document.createElement('p');
+            note.className = 'chart-note';
+            note.textContent = 'Нет позиций' + (accId || q ? ' по фильтру.' : '.');
+            container.appendChild(note);
+            return;
+        }
 
         // сортировка: null всегда в конец независимо от направления
         const { key, dir } = state.htSort;
@@ -1205,6 +1294,10 @@
                         toast('✅ Данные обновлены' + (pf.value != null ? ': ' + Charts.fmt.compact(pf.value) : ''));
                     }
                     loadPortfolio();
+                    // снапшот несёт и портфель: живое приложение после фоновой
+                    // синхронизации вылечит им свой устаревший localStorage
+                    // (этот же обработчик работает и в сервисной странице ?autosync=1)
+                    if (window.WALLET_STANDALONE && window.WalletBackup) WalletBackup.persistSnapshot();
                 } else {
                     outcome = { ok: false, text: ev.message || 'Данные не сохранены' };
                     setSyncUI('error', ev.message || 'Данные не сохранены');
@@ -1430,6 +1523,9 @@
         try { savedPf = localStorage.getItem('walletPfSection'); } catch (e) { /* ignore */ }
         setPfSection(savedPf || 'overview');
 
+        // Сохранённый фильтр «Активов» по счёту (валидируется при рендере чипов)
+        try { state.htAccount = localStorage.getItem('walletHtAccount') || ''; } catch (e) { /* ignore */ }
+
         // Меню ☰ (drawer)
         const drawerOverlay = $('drawerOverlay');
         function openDrawer() {
@@ -1480,6 +1576,9 @@
         // Автосинхронизация (sync-client.js) зовёт тот же путь, что и кнопка;
         // промис возвращаем — фоновой ветке (?autosync=1) нужно дождаться конца
         window.__walletRunSync = function (mock) { return runSync(!!mock); };
+        // Возврат из фона (MainActivity.onResume): фоновая синхронизация могла
+        // обновить портфель, пока приложение спало с устаревшим localStorage
+        window.__walletOnResume = healPortfolioFromSnapshot;
 
         bindForecastControls();
         initDashboardSwipe();
@@ -1512,5 +1611,8 @@
         loadPortfolio().then(() => {
             if (investmentConfig) { restoreForecastInputsFromConfig(); renderForecast(); }
         });
+        // холодный старт: диск localStorage мог отстать даже от снапшота
+        // (прошлый процесс умер, не закоммитив) — сверимся с файлом
+        healPortfolioFromSnapshot();
     });
 })();

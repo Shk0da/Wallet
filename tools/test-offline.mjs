@@ -668,6 +668,66 @@ ok(srcIndex.indexOf('border-radius: 14px;') !== -1
     && srcIndex.indexOf('left: 6px; right: 6px; bottom: 0; width: auto; margin-bottom: 14px;') !== -1,
     'мобильная таб-панель: все углы закруглены, margin-bottom 14px от края');
 
+section('Активы: фильтр по счетам');
+// Чипы строятся из portfolio.accounts (мок: 3 непустых счёта) и режут
+// таблицу по holding.accountQty — брокер ≠ счёт, позиция бывает на двух счетах
+const accChips = doc.querySelectorAll('#accFilter .acc-chip');
+ok(accChips.length === 4 && accChips[0].dataset.account === '',
+    'активы: чипы «Все счета» + 3 счёта мока (' + accChips.length + ')');
+doc.querySelector('#accFilter .acc-chip[data-account="2000123457"]').click();
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 2,
+    'активы: счёт «ИИС» — только его 2 позиции');
+const accQtys = Array.from(doc.querySelectorAll('#holdingsTable tbody tr td:nth-child(2)'))
+    .map(td => td.textContent.trim());
+ok(accQtys[0] === '100' && accQtys[1] === '300',
+    'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300)');
+ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 7');
+doc.querySelector('#accFilter .acc-chip[data-account=""]').click();
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 7,
+    'активы: «Все счета» возвращает все 7 позиций');
+ok(offlineWindow.localStorage.getItem('walletHtAccount') === '',
+    'активы: сброс фильтра сохранён (walletHtAccount)');
+
+section('Возврат из фона: лечение портфеля из снапшота');
+// Фоновая синхронизация обновила снапшот-файл, а localStorage живой страницы
+// отстал (рендерер держит старую копию в памяти) — «Последняя синхронизация»
+// не обновлялась до перезапуска. onResume → __walletOnResume лечит из файла.
+const staleHeal = JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio'));
+staleHeal.meta.generatedAt = '2020-01-01T00:00:00.000Z';
+offlineWindow.localStorage.setItem('walletPortfolio', JSON.stringify(staleHeal));
+const freshHeal = JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio'));
+freshHeal.meta.generatedAt = new Date().toISOString();
+freshHeal.totals.value = 987654;
+offlineWindow.WalletAndroid.getSnapshot = () => JSON.stringify({ portfolio: freshHeal });
+offlineWindow.__walletOnResume();
+ok(JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio')).totals.value === 987654,
+    'resume: портфель восстановлен из снапшота (без перезапуска приложения)');
+ok(doc.getElementById('syncLastTime').textContent.indexOf('2020') === -1,
+    'resume: «Последняя синхронизация» перерисована свежей датой');
+// снапшот НЕ новее — свои данные не затираем (равная дата = не трогаем)
+offlineWindow.WalletAndroid.getSnapshot = () => JSON.stringify({
+    portfolio: Object.assign({}, freshHeal, { totals: { value: 1 } })
+});
+offlineWindow.__walletOnResume();
+ok(JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio')).totals.value === 987654,
+    'resume: не новый снапшот ничего не затирает');
+delete offlineWindow.WalletAndroid.getSnapshot;
+
+section('Снапшот с портфелем и модальные окна (исходники)');
+const backupSrc = readFileSync(path.join(WWW, 'backup.js'), 'utf8');
+ok(backupSrc.indexOf('snapshot.portfolio') !== -1,
+    'снапшот: persistSnapshot включает портфель (файл — источник свежести)');
+ok(dashSrc.indexOf('healPortfolioFromSnapshot') !== -1
+    && dashSrc.indexOf('__walletOnResume') !== -1,
+    'dashboard: лечение из снапшота + хук возврата из фона');
+ok(syncSrc.indexOf('accountQty') !== -1,
+    'sync: позиции несут количество по счетам (accountQty)');
+ok(mainSrcJava.indexOf('onJsConfirm') !== -1 && mainSrcJava.indexOf('onJsPrompt') !== -1
+    && mainSrcJava.indexOf('setCancelable(false)') !== -1,
+    'APK: alert/confirm/prompt — свои модальные окна, закрытие только кнопкой');
+ok(mainSrcJava.indexOf('__walletOnResume') !== -1,
+    'APK: onResume дергает __walletOnResume (свежесть после фоновой синхронизации)');
+
 section('Автономный бандл: экспорт');
 offlineWindow.WalletBackup.exportBackup();
 await sleep(20);

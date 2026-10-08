@@ -1044,6 +1044,13 @@
         #htSearch { padding: 7px 12px; border: 1px solid var(--tui-border); border-radius: var(--r-s); font: inherit; font-size: 12.5px; color: var(--tui-text); background: var(--tui-surface); }
         #htSearch:focus { outline: none; border-color: var(--tui-blue); box-shadow: 0 0 0 3px rgba(66, 139, 249, 0.15); }
 
+        /* Фильтр «Активов» по счетам: лента чипов с точкой цвета брокера */
+        .acc-filter { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 0 0 10px; }
+        .acc-filter[hidden] { display: none; }  /* display:flex перебивает [hidden] */
+        .acc-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--tui-border); border-radius: 999px; background: var(--tui-surface); color: var(--tui-text-2); font: inherit; font-size: 12px; line-height: 1; cursor: pointer; }
+        .acc-chip .chip-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .acc-chip.active { border-color: var(--tui-yellow); color: var(--tui-text); font-weight: 600; background: rgba(255, 221, 45, 0.14); }
+
         /* KPI: иконка в заголовке, жёлтый акцент на наведении */
         .kpi {
             position: relative; overflow: hidden;
@@ -1610,6 +1617,7 @@
                                 <h3>📋 Активы · <span id="htCount">0</span></h3>
                                 <input type="search" id="htSearch" placeholder="Поиск: тикер или название…" aria-label="Поиск активов">
                             </div>
+                            <div class="acc-filter" id="accFilter" hidden aria-label="Фильтр по счетам"></div>
                             <div class="ht-scroll" id="holdingsTable"></div>
                         </div>
 

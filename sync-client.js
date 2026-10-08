@@ -558,11 +558,17 @@ const WalletSync = (() => {
                 : h.avgPrice;
             h.quantity = newQty;
             h.brokerQty.finam = (h.brokerQty.finam || 0) + pos.quantity;
+            if (pos.accountId) {
+                if (h.accountQty === undefined) h.accountQty = {};
+                h.accountQty[pos.accountId] = (h.accountQty[pos.accountId] || 0) + pos.quantity;
+            }
             h.sources.push('finam');
             h.sources = Array.from(new Set(h.sources));
             return;
         }
 
+        const finamAccQty = {};
+        if (pos.accountId) finamAccQty[pos.accountId] = pos.quantity;
         holdings[key] = {
             figi: bond != null && bond.figi != null ? bond.figi : '',
             ticker: ticker,
@@ -577,6 +583,7 @@ const WalletSync = (() => {
             maturityDate: bond != null && bond.maturityDate != null ? bond.maturityDate : '',
             sources: ['finam'],
             brokerQty: { tinkoff: 0, finam: pos.quantity },
+            accountQty: finamAccQty,
             payments: []
         };
     }
@@ -641,6 +648,8 @@ const WalletSync = (() => {
 
             h.paymentsNext12m = round(hPayments12m, 2);
             delete h.brokerQty;  // внутреннее поле — наружу не отдаём
+            // accountQty НАОБОРОТ наружу отдаётся: по нему фильтр «Активы»
+            // режет таблицу по конкретному счёту (брокер ≠ счёт)
         }
 
         for (const acc of accounts) {
@@ -709,35 +718,47 @@ const WalletSync = (() => {
             return out;
         };
 
+        // accountQty: сколько позиции на каждом счёте (id из rawAccounts ниже)
+        // — мок обязан нести то же, что реальная синхронизация, им считает
+        // фильтр «Активы» по счетам
         const holdings = [
             { figi: 'BBG00RPRPXV0', ticker: 'SU26238RMFS4', name: 'ОФЗ 26238', instrumentType: 'bond',
               quantity: 400, avgPrice: 542.3, curPrice: 568.9, nominal: 1000.0, sector: 'government',
               couponPerYear: 2, maturityDate: '2041-05-15', sources: ['tinkoff', 'finam'],
-              brokerQty: { tinkoff: 250, finam: 150 }, payments: mkPayments(2, 31.12, 'coupon') },
+              brokerQty: { tinkoff: 250, finam: 150 },
+              accountQty: { '2000123456': 150, '2000123457': 100, 'FAB00012345': 150 },
+              payments: mkPayments(2, 31.12, 'coupon') },
             { figi: 'BBG00YXY1W39', ticker: 'RU000A105SD9', name: 'Сбербанк-002Р-01D', instrumentType: 'bond',
               quantity: 150, avgPrice: 963.0, curPrice: 991.5, nominal: 1000.0, sector: 'bank',
               couponPerYear: 4, maturityDate: '2027-11-10', sources: ['tinkoff'],
-              brokerQty: { tinkoff: 150, finam: 0 }, payments: mkPayments(4, 24.8, 'coupon') },
+              brokerQty: { tinkoff: 150, finam: 0 },
+              accountQty: { '2000123456': 150 }, payments: mkPayments(4, 24.8, 'coupon') },
             { figi: 'BBG004730N88', ticker: 'SBER', name: 'Сбербанк, ао', instrumentType: 'share',
               quantity: 900, avgPrice: 246.1, curPrice: 318.4, nominal: 0.0, sector: 'financial',
               couponPerYear: 0, maturityDate: '', sources: ['tinkoff'],
-              brokerQty: { tinkoff: 900, finam: 0 }, payments: mkPayments(1, 33.3, 'dividend') },
+              brokerQty: { tinkoff: 900, finam: 0 },
+              accountQty: { '2000123456': 900 }, payments: mkPayments(1, 33.3, 'dividend') },
             { figi: 'BBG00475K6C3', ticker: 'GAZP', name: 'Газпром, ао', instrumentType: 'share',
               quantity: 1200, avgPrice: 128.5, curPrice: 142.7, nominal: 0.0, sector: 'energy',
               couponPerYear: 0, maturityDate: '', sources: ['tinkoff', 'finam'],
-              brokerQty: { tinkoff: 700, finam: 500 }, payments: mkPayments(1, 8.97, 'dividend') },
+              brokerQty: { tinkoff: 700, finam: 500 },
+              accountQty: { '2000123456': 400, '2000123457': 300, 'FAB00012345': 500 },
+              payments: mkPayments(1, 8.97, 'dividend') },
             { figi: 'BBG00B3X0GQ1', ticker: 'LKOH', name: 'ЛУКОЙЛ, ао', instrumentType: 'share',
               quantity: 60, avgPrice: 6890.0, curPrice: 7245.0, nominal: 0.0, sector: 'energy',
               couponPerYear: 0, maturityDate: '', sources: ['finam'],
-              brokerQty: { tinkoff: 0, finam: 60 }, payments: mkPayments(1, 84.0, 'dividend') },
+              brokerQty: { tinkoff: 0, finam: 60 },
+              accountQty: { 'FAB00012345': 60 }, payments: mkPayments(1, 84.0, 'dividend') },
             { figi: 'BBG004HV8V33', ticker: 'LQDT', name: 'LQDT Ликвидность', instrumentType: 'etf',
               quantity: 3000, avgPrice: 1.42, curPrice: 1.51, nominal: 0.0, sector: '',
               couponPerYear: 0, maturityDate: '', sources: ['tinkoff'],
-              brokerQty: { tinkoff: 3000, finam: 0 }, payments: [] },
+              brokerQty: { tinkoff: 3000, finam: 0 },
+              accountQty: { '2000123456': 3000 }, payments: [] },
             { figi: 'BBG00T6KXWX8', ticker: 'TMOS', name: 'Т-Капитал Индекс МосБиржи', instrumentType: 'etf',
               quantity: 850, avgPrice: 7.24, curPrice: 7.86, nominal: 0.0, sector: '',
               couponPerYear: 0, maturityDate: '', sources: ['finam'],
-              brokerQty: { tinkoff: 0, finam: 850 }, payments: [] }
+              brokerQty: { tinkoff: 0, finam: 850 },
+              accountQty: { 'FAB00012345': 850 }, payments: [] }
         ];
 
         const rawAccounts = [
@@ -954,6 +975,7 @@ const WalletSync = (() => {
                         });
                         for (const pos of acc.positions) {
                             if (pos.quantity <= 0) continue;
+                            pos.accountId = id;  // фильтр «Активы» по счетам
                             finamRawPositions.push(pos);
                             finamPositionsByTicker[tickerFromSymbol(pos.symbol)] = pos.symbol;
                         }
@@ -1051,11 +1073,15 @@ const WalletSync = (() => {
                                 }
                                 h.quantity = newQty;
                                 h.brokerQty.tinkoff = (h.brokerQty.tinkoff || 0) + p.quantity;
+                                if (h.accountQty === undefined) h.accountQty = {};
+                                h.accountQty[acc.id] = (h.accountQty[acc.id] || 0) + p.quantity;
                                 h.sources.push('tcs');
                                 h.sources = Array.from(new Set(h.sources));
                                 holdingsByBase[base] = key;
                             } else {
                                 holdingsByBase[base] = key;
+                                const tcsAccQty = {};
+                                tcsAccQty[acc.id] = p.quantity;
                                 holdings[key] = {
                                     figi: p.figi, ticker: ticker, name: name,
                                     instrumentType: p.instrumentType,
@@ -1063,6 +1089,7 @@ const WalletSync = (() => {
                                     nominal: nominal, sector: sector, couponPerYear: couponPerYear,
                                     maturityDate: maturity,
                                     sources: ['tcs'], brokerQty: { tinkoff: p.quantity, finam: 0 },
+                                    accountQty: tcsAccQty,
                                     payments: []
                                 };
                             }

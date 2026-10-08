@@ -2,6 +2,7 @@ package ru.wallet.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,11 +12,15 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.View;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -95,6 +100,29 @@ public class MainActivity extends Activity {
                 }
                 return true;
             }
+
+            // JS alert()/confirm()/prompt(): показываем СВОИ модальные окна.
+            // Дефолтный вид WebView («Подтвердите действие на file://») сжимает
+            // текст и не выглядит частью приложения — теперь заголовок «Шакал»,
+            // крупные кнопки и закрытие только явным выбором (никаких тапов мимо).
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                showJsDialog(message, false, false, null, result);
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                showJsDialog(message, true, false, null, result);
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message,
+                                      String defaultValue, JsPromptResult result) {
+                showJsDialog(message, true, true, defaultValue, result);
+                return true;
+            }
         });
 
         web.addJavascriptInterface(new Bridge(), "WalletAndroid");
@@ -119,13 +147,17 @@ public class MainActivity extends Activity {
     // Вызов из onPause система может отбросить: рендерер WebView засыпает
     // вместе с приложением, и JS не выполняется (проверено на API 34 —
     // возврат из фона показывал данные без пароля). Перезапираем и здесь:
-    // onResume гонит JS по живому рендереру до того, как пользователь
-    // успеет что-то разглядеть.
+    // onResume гоняет JS по живому рендереру до того, как пользователь
+    // успеет что-то разглядеть. __walletOnResume заодно подтягивает портфель
+    // из снапшота: фоновая синхронизация обновила данные, пока приложение
+    // спало с устаревшим localStorage («Последняя синхронизация» отставала).
     @Override
     protected void onResume() {
         super.onResume();
         if (web != null && web.getVisibility() == View.VISIBLE) {
-            web.evaluateJavascript("if (window.__walletRelock) window.__walletRelock();", null);
+            web.evaluateJavascript(
+                    "if (window.__walletRelock) window.__walletRelock();"
+                            + " if (window.__walletOnResume) window.__walletOnResume();", null);
         }
     }
 
@@ -149,6 +181,40 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (web != null && web.canGoBack()) web.goBack();
         else super.onBackPressed();
+    }
+
+    /**
+     * Модальное окно для JS alert()/confirm()/prompt(): setCancelable(false) —
+     * закрыть можно только кнопкой (тап мимо и «назад» не проходят), выбор
+     * уходит в JsResult, JS-поток страницы ждёт его синхронно.
+     */
+    private void showJsDialog(String message, boolean cancellable, boolean withInput,
+                              String preset, final JsResult result) {
+        final EditText input = new EditText(this);
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(getString(R.string.app_name))
+                .setMessage(message)
+                .setCancelable(false)
+                .setPositiveButton("ОК", (dialog, which) -> {
+                    if (withInput && result instanceof JsPromptResult) {
+                        ((JsPromptResult) result).confirm(input.getText().toString());
+                    } else {
+                        result.confirm();
+                    }
+                });
+        if (withInput) {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            float dp = getResources().getDisplayMetrics().density;
+            box.setPadding(Math.round(20 * dp), Math.round(4 * dp), Math.round(20 * dp), 0);
+            input.setText(preset == null ? "" : preset);
+            box.addView(input);
+            b.setView(box);
+        }
+        if (cancellable) {
+            b.setNegativeButton("Отмена", (dialog, which) -> result.cancel());
+        }
+        b.show();
     }
 
     // ==================== Мост WalletAndroid ====================

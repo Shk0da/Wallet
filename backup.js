@@ -229,6 +229,14 @@ const WalletBackup = (() => {
             },
             settings: window.WalletSettings ? WalletSettings.load() : null
         };
+        // Портфель — тоже: файл всегда свежий (мост пишет синхронно), а
+        // localStorage живого приложения после ФОНОВОЙ синхронизации отстаёт
+        // (ту страницу обновил рендерер сервиса) — при возврате из фона
+        // dashboard.__walletOnResume лечит его из этого снапшота
+        if (window.WALLET_STANDALONE) {
+            try { snapshot.portfolio = JSON.parse(localStorage.getItem('walletPortfolio') || 'null'); }
+            catch (e) { snapshot.portfolio = null; }
+        }
         try {
             WalletAndroid.persistSnapshot(JSON.stringify(snapshot));
         } catch (e) { /* мост недоступен — веб-режим */ }
