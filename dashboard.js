@@ -1615,4 +1615,13 @@
         // (прошлый процесс умер, не закоммитив) — сверимся с файлом
         healPortfolioFromSnapshot();
     });
+
+    // Хук для нативной стороны: тап по итоговому пушу синхронизации.
+    // MainActivity читает extra из PendingIntent и зовёт нас, когда страница
+    // загрузилась. Неизвестное значение — портфель: пуш именно о нём.
+    // Данные к этому моменту уже свежие — healPortfolioFromSnapshot выше
+    // долечил localStorage из снапшота, который только что писала синхронизация.
+    window.__walletOpenView = function (view) {
+        setView(view === 'balance' || view === 'calendar' ? view : 'dashboard');
+    };
 })();

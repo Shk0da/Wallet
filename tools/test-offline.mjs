@@ -713,6 +713,20 @@ ok(JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio')).totals.valu
     'resume: не новый снапшот ничего не затирает');
 delete offlineWindow.WalletAndroid.getSnapshot;
 
+section('Открытие по пушу синхронизации (__walletOpenView)');
+// Тап по итоговому пушу SyncService шлёт extra view=dashboard; MainActivity
+// читает его в onCreate и зовёт хук после загрузки страницы.
+doc.querySelector('#appDrawer .drawer-item[data-nav="calendar"]').click();
+ok(!doc.body.classList.contains('dashboard-mode'), 'пуши: до хука — режим календаря');
+offlineWindow.__walletOpenView('dashboard');
+ok(doc.body.classList.contains('dashboard-mode')
+    && offlineWindow.localStorage.getItem('walletView') === 'dashboard',
+    'пуши: хук включает экран портфеля и запоминает выбор');
+offlineWindow.__walletOpenView('x\'); steals = 1; (\'');
+ok(offlineWindow.localStorage.getItem('walletView') === 'dashboard'
+    && typeof offlineWindow.steals === 'undefined',
+    'пуши: мусорный extra → дефолт-портфель, инъекция в JS невозможна');
+
 section('Снапшот с портфелем и модальные окна (исходники)');
 const backupSrc = readFileSync(path.join(WWW, 'backup.js'), 'utf8');
 ok(backupSrc.indexOf('snapshot.portfolio') !== -1,
@@ -727,6 +741,16 @@ ok(mainSrcJava.indexOf('onJsConfirm') !== -1 && mainSrcJava.indexOf('onJsPrompt'
     'APK: alert/confirm/prompt — свои модальные окна, закрытие только кнопкой');
 ok(mainSrcJava.indexOf('__walletOnResume') !== -1,
     'APK: onResume дергает __walletOnResume (свежесть после фоновой синхронизации)');
+ok(dashSrc.indexOf('__walletOpenView') !== -1,
+    'dashboard: хук __walletOpenView (переключение вида по тапу на пуш)');
+ok(mainSrcJava.indexOf('__walletOpenView') !== -1
+    && mainSrcJava.indexOf('onPageFinished') !== -1,
+    'APK: extra «view» из пуша применяется после загрузки страницы');
+ok(svcSrc.indexOf('setContentIntent(openAppPi())') !== -1
+    && svcSrc.indexOf('open.putExtra("view", "dashboard")') !== -1,
+    'APK: итоговый пуш синхронизации открывает экран портфеля');
+ok(/PendingIntent\.getActivity\(this, 1, open/.test(svcSrc),
+    'APK: свой requestCode у пуша синхронизации (extras не конфликтуют с утренним)');
 
 section('Автономный бандл: экспорт');
 offlineWindow.WalletBackup.exportBackup();

@@ -56,6 +56,10 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
+    // Вид, который нужно включить после загрузки страницы: тап по пушу
+    // синхронизации приносит extra «view». null — обычный запуск, вид
+    // восстановится из localStorage как всегда.
+    private String pendingOpenView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,7 +84,21 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setLoadWithOverviewMode(true);
 
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient() {
+            // Переключение вида по тапу на пуш живёт в JS, а страница грузится
+            // асинхронно: холодный старт успевает прожить onResume ещё до
+            // первой отрисовки. Дожидаемся onPageFinished и зовём хук
+            // dashboard.js. Whitelist-значение — экранирование не нужно.
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (pendingOpenView != null) {
+                    String v = pendingOpenView;
+                    pendingOpenView = null;
+                    view.evaluateJavascript(
+                            "if (window.__walletOpenView) window.__walletOpenView('" + v + "');", null);
+                }
+            }
+        });
         web.setWebChromeClient(new WebChromeClient() {
             // <input type="file"> в WebView не работает без хром-клиента:
             // импорт бэкапа идёт через системный выбор файла
@@ -127,6 +145,16 @@ public class MainActivity extends Activity {
 
         web.addJavascriptInterface(new Bridge(), "WalletAndroid");
         setContentView(web);
+
+        // Тап по пушу синхронизации: активность standard-launchMode, так что
+        // CLEAR_TOP из PendingIntent её пересоздаёт — интент читаем в onCreate.
+        // Пересоздание — ещё и часть «свежих данных»: новая страница лечит
+        // портфель из снапшота (healPortfolioFromSnapshot на старте).
+        String view = getIntent().getStringExtra("view");
+        if ("dashboard".equals(view) || "balance".equals(view) || "calendar".equals(view)) {
+            pendingOpenView = view;
+        }
+
         web.loadUrl(START_URL);
 
         // Будильник мог слететь (перезагрузка, чистка) — восстановим из снапшота

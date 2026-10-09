@@ -3,6 +3,7 @@ package ru.wallet.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
@@ -105,7 +106,8 @@ public class SyncService extends Service {
         b.setContentTitle(getString(R.string.app_name))
                 .setContentText("Синхронизация брокеров…")
                 .setSmallIcon(R.drawable.ic_notify)
-                .setOngoing(true);
+                .setOngoing(true)
+                .setContentIntent(openAppPi());
         startForeground(NOTIF_ID, b.build());
     }
 
@@ -189,12 +191,31 @@ public class SyncService extends Service {
                     b.setContentTitle(getString(R.string.app_name))
                             .setContentText((ok ? "✅ " : "⚠️ ") + summary)
                             .setSmallIcon(R.drawable.ic_notify)
-                            .setAutoCancel(true);
+                            .setAutoCancel(true)
+                            .setContentIntent(openAppPi());
                     nm.notify(NOTIF_ID, b.build());
                 }
             }
             stopSelf();
         });
+    }
+
+    /**
+     * Тап по пушу синхронизации открывает приложение сразу на экране
+     * портфеля. Пересоздание активности (standard + CLEAR_TOP) заодно
+     * гарантирует свежие данные: новая страница лечит портфель из
+     * снапшота, который только что записала синхронизация.
+     *
+     * requestCode=1, а не 0 как у утреннего пуша NotifyReceiver:
+     * идентичность PendingIntent не учитывает extras (Intent.filterEquals),
+     * и один PI на двоих с FLAG_UPDATE_CURRENT затирал бы чужие extra.
+     */
+    private PendingIntent openAppPi() {
+        Intent open = new Intent(this, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        open.putExtra("view", "dashboard");
+        return PendingIntent.getActivity(this, 1, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     // Минимальный мост для страницы синхронизации: http (как в MainActivity)
