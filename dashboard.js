@@ -265,36 +265,48 @@
         return { text: (d >= 0 ? '+' : '−') + Charts.fmt.compact(Math.abs(d)) + ' за день', cls: d >= 0 ? 'pos' : 'neg' };
     }
 
-    /** Плашка роста портфеля в KPI «Стоимость»: клик циклит месяц → полгода → год */
-    function growthPlate(p) {
-        const plate = document.createElement('button');
-        plate.type = 'button';
-        plate.className = 'growth-plate';
-        const period = GROWTH_PERIODS[state.growthPeriod] || GROWTH_PERIODS[0];
-        const hist = Array.isArray(p.history) ? p.history : [];
-        const last = hist[hist.length - 1];
+    /** Базовая точка истории для периода: последний снапшот не новее
+     *  now − period.days (история отсортирована по дате). null — период
+     *  недоступен: история не доросла до его глубины. */
+    function growthBase(hist, period) {
         const target = new Date(Date.now() - period.days * 86400000).toISOString().slice(0, 10);
-        // базовая точка — последний снапшот не новее target (история отсортирована по дате)
         let base = null;
         for (const h of hist) {
             if (!h.date) continue;
             if (h.date <= target) { if (h.value != null) base = h; }
             else break;
         }
-        if (!last || !base || !(base.value > 0)) {
-            plate.classList.add('muted');
-            plate.textContent = '— ' + period.label;
-            plate.title = 'История короче периода: плашка оживёт, когда накопятся синхронизации';
-        } else {
-            const d = (last.value || 0) - base.value;
-            const pct = d / base.value * 100;
-            plate.classList.add(d >= 0 ? 'pos' : 'neg');
-            plate.textContent = (d >= 0 ? '▲ +' : '▼ −') + Charts.fmt.pct(Math.abs(pct)) + ' ' + period.label;
-            plate.title = 'Стоимость: ' + (d >= 0 ? '+' : '−') + Charts.fmt.compact(Math.abs(d)) +
-                ' · клик — сменить период (месяц → полгода → год)';
-        }
+        return base != null && base.value > 0 ? base : null;
+    }
+
+    /** Плашка роста портфеля в KPI «Стоимость»: клик циклит доступные периоды.
+     *  Период доступен, когда история доросла до его глубины: за две недели
+     *  истории «за месяц» не показать. Минус-заглушки («— за год») не выводим:
+     *  пока доступных периодов нет, плашки нет вовсе; накопилась статистика —
+     *  появляется «за месяц», доросла — подключаются «за 6 мес» и «за год». */
+    function growthPlate(p) {
+        const hist = Array.isArray(p.history) ? p.history : [];
+        const last = hist[hist.length - 1];
+        if (!last || last.value == null) return null;
+        const avail = GROWTH_PERIODS.filter(pe => growthBase(hist, pe) != null);
+        if (avail.length === 0) return null;
+        // сохранённый период мог стать недоступным (история стала короче) —
+        // берём самый глубокий из доступных
+        let period = GROWTH_PERIODS[state.growthPeriod] || GROWTH_PERIODS[0];
+        if (avail.indexOf(period) === -1) period = avail[avail.length - 1];
+        const base = growthBase(hist, period);
+        const plate = document.createElement('button');
+        plate.type = 'button';
+        plate.className = 'growth-plate';
+        const d = (last.value || 0) - base.value;
+        const pct = d / base.value * 100;
+        plate.classList.add(d >= 0 ? 'pos' : 'neg');
+        plate.textContent = (d >= 0 ? '▲ +' : '▼ −') + Charts.fmt.pct(Math.abs(pct)) + ' ' + period.label;
+        plate.title = 'Стоимость: ' + (d >= 0 ? '+' : '−') + Charts.fmt.compact(Math.abs(d)) +
+            ' · клик — сменить период (' + avail.map(pe => pe.label).join(' → ') + ')';
         plate.addEventListener('click', () => {
-            state.growthPeriod = (state.growthPeriod + 1) % GROWTH_PERIODS.length;
+            const next = avail[(avail.indexOf(period) + 1) % avail.length];
+            state.growthPeriod = GROWTH_PERIODS.indexOf(next);
             try { localStorage.setItem('wallet-growth-period', String(state.growthPeriod)); } catch (e) {}
             renderKpis(state.portfolio);
         });
@@ -310,7 +322,8 @@
         const valueCard = kpiCard('🏦', 'Стоимость', Charts.fmt.compact(t.value),
             'активы ' + Charts.fmt.compact(Math.max(0, (t.value || 0) - (t.cash || 0))) + ' + кэш ' + Charts.fmt.compact(t.cash),
             null, dValue ? dValue.text : null, dValue ? dValue.cls : null);
-        valueCard.insertBefore(growthPlate(p), valueCard.querySelector('.kpi-sub'));
+        const plate = growthPlate(p);
+        if (plate) valueCard.insertBefore(plate, valueCard.querySelector('.kpi-sub'));
         row.appendChild(valueCard);
         row.appendChild(kpiCard('💰', 'Вложено', Charts.fmt.compact(t.cost), 'кэш у брокеров: ' + Charts.fmt.compact(t.cash)));
         row.appendChild(kpiCard('📈', 'Прибыль', (t.pnl >= 0 ? '+' : '') + Charts.fmt.compact(t.pnl),
