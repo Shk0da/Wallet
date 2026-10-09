@@ -528,12 +528,26 @@ const WalletSync = (() => {
         return ticker.length >= 10 && /^[0-9A-Za-z]+$/.test(ticker);
     }
 
+    // Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi
+    // вида USD000UTSTSEM / CNYRUB_TOM_CETS — ISO-код это первые три буквы.
+    const CURRENCY_NAMES = {
+        USD: 'Доллар США', EUR: 'Евро', GBP: 'Фунт стерлингов', CHF: 'Швейцарский франк',
+        CNY: 'Юань', JPY: 'Иена', TRY: 'Турецкая лира', HKD: 'Гонконгский доллар',
+        KZT: 'Тенге', BYN: 'Белорусский рубль', AMD: 'Драм', GEL: 'Лари'
+    };
+    function currencyMeta(figi) {
+        const m = /^[A-Z]{3}/.exec(figi || '');
+        const code = m != null ? m[0] : '';
+        return { ticker: code, name: CURRENCY_NAMES[code] || ('Валюта ' + (code !== '' ? code : figi)) };
+    }
+
     // Конвертация и слияние позиции Finam в общий список holdings.
     // Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как в kts).
-    // ФЬЮЧЕРСЫ Finam не раскладываются: /v1/accounts отдаёт только symbol без типа
-    // инструмента, а коды MOEX-фьючерсов (SiZ5, MIXZ5…) от акций надёжно не
-    // отличить — они попадают в holdings как «share». У T-Invest тип честный
-    // (instrumentType='futures'), фьючерсы обрабатываются там.
+    // ФЬЮЧЕРСЫ и ВАЛЮТЫ Finam не раскладываются: /v1/accounts отдаёт только
+    // symbol без типа инструмента, а коды MOEX-фьючерсов (SiZ5, MIXZ5…) от
+    // акций надёжно не отличить — они попадают в holdings как «share».
+    // У T-Invest тип честный (instrumentType='futures'/'currency'),
+    // фьючерсы и валюты обрабатываются там.
     function mergeFinamPosition(holdings, pos, bond) {
         const ticker = tickerFromSymbol(pos.symbol);
         const nominal = bond != null && bond.nominal != null ? bond.nominal : 1000.0;
@@ -602,8 +616,9 @@ const WalletSync = (() => {
         const in12m = ymd(addMonths(todayParts, 12));
 
         // Позиции с ненулевым количеством, по убыванию стоимости.
-        // Фьючерсы — полноценные holdings: их ₽-стоимость = quantity × curPrice
-        // (GetPortfolio T-Invest с currency=RUB отдаёт цену контракта в рублях).
+        // Фьючерсы и валюты — полноценные holdings: их ₽-стоимость =
+        // quantity × curPrice (GetPortfolio T-Invest с currency=RUB отдаёт
+        // цену контракта в рублях, а валюту — курсом ₽ за единицу).
         const list = Object.keys(holdings)
             .map(k => Object.assign({}, holdings[k]))
             .filter(h => h.quantity > 0);
@@ -771,12 +786,19 @@ const WalletSync = (() => {
               quantity: 2, avgPrice: 178500.0, curPrice: 191300.0, nominal: 0.0, sector: '',
               couponPerYear: 0, maturityDate: '', sources: ['tinkoff'],
               brokerQty: { tinkoff: 2, finam: 0 },
-              accountQty: { '2000123456': 2 }, payments: [] }
+              accountQty: { '2000123456': 2 }, payments: [] },
+            // Доллар США: quantity в единицах, цена — курс ₽ (1200 × 79.8 = 95 760),
+            // купонов/дивидендов нет; тикер пуст → из префикса figi
+            { figi: 'USD000UTSTSEM', ticker: 'USD', name: 'Доллар США', instrumentType: 'currency',
+              quantity: 1200, avgPrice: 74.5, curPrice: 79.8, nominal: 0.0, sector: '',
+              couponPerYear: 0, maturityDate: '', sources: ['tinkoff'],
+              brokerQty: { tinkoff: 1200, finam: 0 },
+              accountQty: { '2000123456': 1200 }, payments: [] }
         ];
 
         const rawAccounts = [
             { broker: 'tinkoff', id: '2000123456', name: 'Брокерский счёт', type: 'ACCOUNT_TYPE_TINKOFF',
-              cash: 42000.0, positionsCount: 6 },
+              cash: 42000.0, positionsCount: 7 },
             { broker: 'tinkoff', id: '2000123457', name: 'ИИС', type: 'ACCOUNT_TYPE_TINKOFF_IIS',
               cash: 8500.0, positionsCount: 2 },
             { broker: 'finam', id: 'FAB00012345', name: 'Finam Брокерский', type: '',
@@ -789,7 +811,7 @@ const WalletSync = (() => {
         const finamTotal = result.totals.byBroker.finam.value + 12300.0;
         result.accounts = [
             { broker: 'tinkoff', id: '2000123456', name: 'Брокерский счёт', type: 'ACCOUNT_TYPE_TINKOFF',
-              equity: round(tcsTotal * 0.78, 2), cash: 42000.0, futuresValue: 382600.0, positionsCount: 6 },
+              equity: round(tcsTotal * 0.78, 2), cash: 42000.0, futuresValue: 382600.0, positionsCount: 7 },
             { broker: 'tinkoff', id: '2000123457', name: 'ИИС', type: 'ACCOUNT_TYPE_TINKOFF_IIS',
               equity: round(tcsTotal * 0.22, 2), cash: 8500.0, futuresValue: 0, positionsCount: 2 },
             { broker: 'finam', id: 'FAB00012345', name: 'Finam Брокерский', type: '',
@@ -1039,10 +1061,14 @@ const WalletSync = (() => {
                             futuresValue: round(futuresValue, 2), positionsCount: positions.length
                         });
 
-                        // В holdings идут бумаги и фьючерсы (bond/share/etf/futures);
-                        // метаданные облигаций подтянутся после загрузки реестра
+                        // В holdings идут бумаги, фьючерсы и валюты
+                        // (bond/share/etf/futures/currency); метаданные облигаций
+                        // подтянутся после загрузки реестра
                         for (const p of positions) {
-                            if (['bond', 'share', 'etf', 'futures'].indexOf(p.instrumentType) === -1 || p.quantity <= 0) continue;
+                            if (['bond', 'share', 'etf', 'futures', 'currency'].indexOf(p.instrumentType) === -1 || p.quantity <= 0) continue;
+                            // Рубль приходит валютной позицией (figi RUB000UTSTOM × 1 ₽):
+                            // это кэш, он уже посчитан через GetWithdrawLimits — пропускаем
+                            if (p.instrumentType === 'currency' && p.figi.indexOf('RUB') === 0) continue;
 
                             let ticker, name, nominal, sector, couponPerYear, maturity;
                             if (p.instrumentType === 'bond') {
@@ -1062,6 +1088,16 @@ const WalletSync = (() => {
                                 }
                                 ticker = p.ticker !== '' ? p.ticker : p.figi;
                                 name = nameCache[fk] !== undefined ? nameCache[fk] : ticker;
+                                nominal = 0.0; sector = ''; couponPerYear = 0; maturity = '';
+                            } else if (p.instrumentType === 'currency') {
+                                // Стоимость = quantity × curPrice: quantity в единицах
+                                // валюты, curPrice — курс ₽ за единицу (проверено на живом
+                                // GetPortfolio: CNY qty=0.1 при cur=12.68 — это 0.1 юаня
+                                // по курсу 12.68 ₽). ticker у валют пуст, имя и код — из
+                                // префикса figi. Купонов/дивидендов нет.
+                                const cm = currencyMeta(p.figi);
+                                ticker = cm.ticker !== '' ? cm.ticker : p.figi;
+                                name = cm.name;
                                 nominal = 0.0; sector = ''; couponPerYear = 0; maturity = '';
                             } else {
                                 const kind = p.instrumentType === 'share' ? 'INSTRUMENT_TYPE_SHARE' : 'INSTRUMENT_TYPE_ETF';

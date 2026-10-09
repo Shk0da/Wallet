@@ -681,10 +681,10 @@ const accQtys = Array.from(doc.querySelectorAll('#holdingsTable tbody tr td:nth-
     .map(td => td.textContent.trim());
 ok(accQtys[0] === '100' && accQtys[1] === '300',
     'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300)');
-ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 8');
+ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 9');
 doc.querySelector('#accFilter .acc-chip[data-account=""]').click();
-ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 8,
-    'активы: «Все счета» возвращает все 8 позиций');
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 9,
+    'активы: «Все счета» возвращает все 9 позиций');
 ok(offlineWindow.localStorage.getItem('walletHtAccount') === '',
     'активы: сброс фильтра сохранён (walletHtAccount)');
 
@@ -702,9 +702,77 @@ ok(!!(pfFut.accounts || []).find(a => a.futuresValue === 382600),
 const futChip = doc.querySelector('#holdingsTable .ht-type-chip.t-futures');
 ok(!!futChip && futChip.textContent === 'Фьючерсы',
     'фьючерсы: чип типа в «Активах» с меткой «Фьючерсы»');
-ok(syncSrc.indexOf("'futures'].indexOf(p.instrumentType)") !== -1
+ok(syncSrc.indexOf("'futures', 'currency'].indexOf(p.instrumentType)") !== -1
     && syncSrc.indexOf('.filter(h => h.quantity > 0);') !== -1,
     'фьючерсы: T-Invest пускает futures в holdings, computeTotals не режет их');
+
+section('Валюты');
+// Мок несёт USD (1200 × курс 79.8): валюта — полноценный holding, как фьючерсы;
+// рубль (RUB000UTSTOM) не попадает в holdings — это кэш, он уже в GetWithdrawLimits
+const curH = (pfFut.holdings || []).find(h => h.instrumentType === 'currency');
+ok(!!curH && curH.ticker === 'USD' && curH.name === 'Доллар США' && curH.quantity === 1200,
+    'валюты: USD в holdings (ticker из figi, 1200 единиц)');
+ok(pfFut.totals.byType && Math.round(pfFut.totals.byType.currency) === 95760,
+    'валюты: стоимость 1200 × 79.8 в byType (' + (pfFut.totals.byType ? pfFut.totals.byType.currency : '?') + ')');
+const curChip = doc.querySelector('#holdingsTable .ht-type-chip.t-currency');
+ok(!!curChip && curChip.textContent === 'Валюты',
+    'валюты: чип типа в «Активах» с меткой «Валюты»');
+ok(syncSrc.indexOf("'bond', 'share', 'etf', 'futures', 'currency'].indexOf(p.instrumentType)") !== -1
+    && syncSrc.indexOf("p.figi.indexOf('RUB') === 0") !== -1
+    && syncSrc.indexOf('function currencyMeta') !== -1,
+    'валюты: T-Invest пускает currency в holdings, рубль пропускается');
+const phpSrcCur = readFileSync(path.join(ROOT, 'sync.php'), 'utf8');
+ok(phpSrcCur.indexOf("'currency'], true)") !== -1
+    && phpSrcCur.indexOf("str_starts_with($p['figi'], 'RUB')") !== -1,
+    'валюты: sync.php — зеркальный фильтр и пропуск рубля');
+
+section('Плашка роста: периоды только по глубине истории');
+// Плашка в KPI «Стоимость» больше не показывает минус-заглушки «— за месяц»:
+// доступны только периоды, до которых доросла история (базовая точка не новее
+// now − N дней). Мок-история 90 дней → только «за месяц».
+function setGrowthHistory(days) {
+    const pf = JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio'));
+    const v0 = pf.totals.value || 1000000, c0 = pf.totals.cost || 900000;
+    const hist = [];
+    for (let i = days; i >= 1; i--) {
+        hist.push({
+            date: new Date(Date.now() - i * 86400000).toISOString().slice(0, 10),
+            value: Math.round(v0 * (1 - i / (days * 18)) * 100) / 100,
+            cost: Math.round(c0 * (1 - i / (days * 30)) * 100) / 100
+        });
+    }
+    pf.history = hist;
+    offlineWindow.localStorage.setItem('walletPortfolio', JSON.stringify(pf));
+    offlineWindow.document.dispatchEvent(new offlineWindow.Event('wallet:portfolio-imported'));
+}
+const plateOf = () => doc.querySelector('#kpiRow .growth-plate');
+setGrowthHistory(90);
+let gPlate = plateOf();
+ok(!!gPlate && gPlate.textContent.indexOf('за месяц') !== -1 && gPlate.textContent.indexOf('—') === -1,
+    'плашка: история 90 дней — «за месяц» без минус-заглушки');
+gPlate.click();
+ok(plateOf().textContent.indexOf('за месяц') !== -1,
+    'плашка: клик по единственному доступному периоду его не меняет');
+// Глубокая история: все три периода, клик циклит месяц → 6 мес → год → месяц
+setGrowthHistory(400);
+const labels = [];
+for (let i = 0; i < 3; i++) { labels.push(plateOf().textContent); plateOf().click(); }
+ok(labels[0].indexOf('за месяц') !== -1 && labels[1].indexOf('за 6 мес') !== -1 && labels[2].indexOf('за год') !== -1,
+    'плашка: 400 дней — цикл месяц → 6 мес → год (' + labels.map(l => l.trim()).join(' | ') + ')');
+ok(plateOf().textContent.indexOf('за месяц') !== -1
+    && offlineWindow.localStorage.getItem('wallet-growth-period') === '0',
+    'плашка: цикл замыкается на «за месяц», выбор сохранён');
+// Сохранённый «за год» при укороченной истории → кламп к доступному «за месяц»
+setGrowthHistory(400);
+plateOf().click(); plateOf().click(); // → «за год»
+ok(plateOf().textContent.indexOf('за год') !== -1, 'плашка: выбран «за год»');
+setGrowthHistory(90);
+ok(plateOf().textContent.indexOf('за месяц') !== -1,
+    'плашка: недоступный сохранённый период клампится к «за месяц»');
+// Совсем короткая история — плашки нет вовсе
+setGrowthHistory(5);
+ok(plateOf() === null, 'плашка: история 5 дней — плашки нет (без минусов)');
+setGrowthHistory(90); // вернуть мок-историю для последующих секций
 
 section('Возврат из фона: лечение портфеля из снапшота');
 // Фоновая синхронизация обновила снапшот-файл, а localStorage живой страницы

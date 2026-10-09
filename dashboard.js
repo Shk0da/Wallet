@@ -396,7 +396,7 @@
     function renderTypeDonut(p) {
         const container = $('chartTypes');
         const byType = p.totals.byType || {};
-        const order = ['share', 'bond', 'etf', 'futures'];
+        const order = ['share', 'bond', 'etf', 'futures', 'currency'];
         const extra = Object.keys(byType).filter(k => !order.includes(k) && byType[k] > 0);
         const data = [...order, ...extra]
             .filter(k => byType[k] > 0)

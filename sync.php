@@ -503,6 +503,21 @@ function isBondSymbol(string $ticker): bool {
     return strlen($ticker) >= 10 && ctype_alnum($ticker);
 }
 
+/** Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi
+ *  вида USD000UTSTSEM / CNYRUB_TOM_CETS — ISO-код это первые три буквы. */
+const CURRENCY_NAMES = [
+    'USD' => 'Доллар США', 'EUR' => 'Евро', 'GBP' => 'Фунт стерлингов', 'CHF' => 'Швейцарский франк',
+    'CNY' => 'Юань', 'JPY' => 'Иена', 'TRY' => 'Турецкая лира', 'HKD' => 'Гонконгский доллар',
+    'KZT' => 'Тенге', 'BYN' => 'Белорусский рубль', 'AMD' => 'Драм', 'GEL' => 'Лари',
+];
+function currencyMeta(string $figi): array {
+    $code = preg_match('/^[A-Z]{3}/', $figi, $m) ? $m[0] : '';
+    return [
+        'ticker' => $code,
+        'name' => CURRENCY_NAMES[$code] ?? ('Валюта ' . ($code !== '' ? $code : $figi)),
+    ];
+}
+
 /**
  * Конвертация и слияние позиции Finam в общий список holdings.
  * Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как в kts).
@@ -567,8 +582,9 @@ function computeTotals(array $holdings, array $accounts): array {
     $month0 = new DateTimeImmutable('first day of this month');
 
     // Позиции с ненулевым количеством, по убыванию стоимости.
-    // Фьючерсы — полноценные holdings: их ₽-стоимость = quantity × curPrice
-    // (GetPortfolio T-Invest с currency=RUB отдаёт цену контракта в рублях).
+    // Фьючерсы и валюты — полноценные holdings: их ₽-стоимость =
+    // quantity × curPrice (GetPortfolio T-Invest с currency=RUB отдаёт
+    // цену контракта в рублях, а валюту — курсом ₽ за единицу).
     $list = array_values(array_filter($holdings, static fn($h) => $h['quantity'] > 0));
     usort($list, static fn($a, $b) => $b['quantity'] * $b['curPrice'] <=> $a['quantity'] * $a['curPrice']);
 
@@ -731,11 +747,17 @@ function buildMockPortfolio(): array {
          'quantity' => 2, 'avgPrice' => 178500.0, 'curPrice' => 191300.0, 'nominal' => 0.0, 'sector' => '',
          'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['tinkoff'],
          'brokerQty' => ['tinkoff' => 2, 'finam' => 0], 'payments' => []],
+        // Доллар США: quantity в единицах, цена — курс ₽ (1200 × 79.8 = 95 760),
+        // купонов/дивидендов нет; тикер пуст → из префикса figi
+        ['figi' => 'USD000UTSTSEM', 'ticker' => 'USD', 'name' => 'Доллар США', 'instrumentType' => 'currency',
+         'quantity' => 1200, 'avgPrice' => 74.5, 'curPrice' => 79.8, 'nominal' => 0.0, 'sector' => '',
+         'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['tinkoff'],
+         'brokerQty' => ['tinkoff' => 1200, 'finam' => 0], 'payments' => []],
     ];
 
     $rawAccounts = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'cash' => 42000.0, 'positionsCount' => 6],
+         'cash' => 42000.0, 'positionsCount' => 7],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'cash' => 8500.0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
@@ -748,7 +770,7 @@ function buildMockPortfolio(): array {
     $finamTotal = $result['totals']['byBroker']['finam']['value'] + 12300.0;
     $result['accounts'] = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 382600.0, 'positionsCount' => 6],
+         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 382600.0, 'positionsCount' => 7],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'equity' => round($tcsTotal * 0.22, 2), 'cash' => 8500.0, 'futuresValue' => 0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
@@ -993,9 +1015,13 @@ if ($tcsEnabled) {
                 'futuresValue' => round($futuresValue, 2), 'positionsCount' => count($positions),
             ];
 
-            // В holdings идут бумаги и фьючерсы (bond/share/etf/futures); метаданные облигаций — после реестра
+            // В holdings идут бумаги, фьючерсы и валюты (bond/share/etf/futures/currency);
+            // метаданные облигаций — после реестра
             foreach ($positions as $p) {
-                if (!in_array($p['instrumentType'], ['bond', 'share', 'etf', 'futures'], true) || $p['quantity'] <= 0) continue;
+                if (!in_array($p['instrumentType'], ['bond', 'share', 'etf', 'futures', 'currency'], true) || $p['quantity'] <= 0) continue;
+                // Рубль приходит валютной позицией (figi RUB000UTSTOM × 1 ₽): это кэш,
+                // он уже посчитан через GetWithdrawLimits — пропускаем
+                if ($p['instrumentType'] === 'currency' && str_starts_with($p['figi'], 'RUB')) continue;
 
                 if ($p['instrumentType'] === 'bond') {
                     $ticker = $p['ticker'] !== '' ? $p['ticker'] : $p['figi'];
@@ -1012,6 +1038,15 @@ if ($tcsEnabled) {
                     }
                     $ticker = $p['ticker'] !== '' ? $p['ticker'] : $p['figi'];
                     $name = $nameCache[$fk] ?? $ticker;
+                    $nominal = 0.0; $sector = ''; $couponPerYear = 0; $maturity = '';
+                } elseif ($p['instrumentType'] === 'currency') {
+                    // Стоимость = quantity × curPrice: quantity в единицах валюты,
+                    // curPrice — курс ₽ за единицу (проверено на живом GetPortfolio:
+                    // CNY qty=0.1 при cur=12.68 — это 0.1 юаня по курсу 12.68 ₽).
+                    // ticker у валют пуст, имя и код — из префикса figi; выплат нет.
+                    $cm = currencyMeta($p['figi']);
+                    $ticker = $cm['ticker'] !== '' ? $cm['ticker'] : $p['figi'];
+                    $name = $cm['name'];
                     $nominal = 0.0; $sector = ''; $couponPerYear = 0; $maturity = '';
                 } else {
                     $kind = $p['instrumentType'] === 'share' ? 'INSTRUMENT_TYPE_SHARE' : 'INSTRUMENT_TYPE_ETF';
