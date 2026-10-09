@@ -530,6 +530,10 @@ const WalletSync = (() => {
 
     // Конвертация и слияние позиции Finam в общий список holdings.
     // Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как в kts).
+    // ФЬЮЧЕРСЫ Finam не раскладываются: /v1/accounts отдаёт только symbol без типа
+    // инструмента, а коды MOEX-фьючерсов (SiZ5, MIXZ5…) от акций надёжно не
+    // отличить — они попадают в holdings как «share». У T-Invest тип честный
+    // (instrumentType='futures'), фьючерсы обрабатываются там.
     function mergeFinamPosition(holdings, pos, bond) {
         const ticker = tickerFromSymbol(pos.symbol);
         const nominal = bond != null && bond.nominal != null ? bond.nominal : 1000.0;
@@ -597,10 +601,12 @@ const WalletSync = (() => {
         const today = ymd(todayParts);
         const in12m = ymd(addMonths(todayParts, 12));
 
-        // Только ликвидные позиции с ненулевым количеством, по убыванию стоимости
+        // Позиции с ненулевым количеством, по убыванию стоимости.
+        // Фьючерсы — полноценные holdings: их ₽-стоимость = quantity × curPrice
+        // (GetPortfolio T-Invest с currency=RUB отдаёт цену контракта в рублях).
         const list = Object.keys(holdings)
             .map(k => Object.assign({}, holdings[k]))
-            .filter(h => h.quantity > 0 && h.instrumentType !== 'futures');
+            .filter(h => h.quantity > 0);
         list.sort((a, b) => b.quantity * b.curPrice - a.quantity * a.curPrice);
 
         let value = 0.0, cost = 0.0, payingValue = 0.0, payments12m = 0.0;
@@ -758,12 +764,19 @@ const WalletSync = (() => {
               quantity: 850, avgPrice: 7.24, curPrice: 7.86, nominal: 0.0, sector: '',
               couponPerYear: 0, maturityDate: '', sources: ['finam'],
               brokerQty: { tinkoff: 0, finam: 850 },
-              accountQty: { 'FAB00012345': 850 }, payments: [] }
+              accountQty: { 'FAB00012345': 850 }, payments: [] },
+            // Фьючерс NASDAQ-100: цена = ₽ за контракт (2 × 191300 = 382 600),
+            // купонов/дивидендов нет — только вариационная маржа, её API не отдаёт
+            { figi: 'FUTNASDAQ1226', ticker: 'NASD', name: 'Фьючерс NASDAQ-100 12.26', instrumentType: 'futures',
+              quantity: 2, avgPrice: 178500.0, curPrice: 191300.0, nominal: 0.0, sector: '',
+              couponPerYear: 0, maturityDate: '', sources: ['tinkoff'],
+              brokerQty: { tinkoff: 2, finam: 0 },
+              accountQty: { '2000123456': 2 }, payments: [] }
         ];
 
         const rawAccounts = [
             { broker: 'tinkoff', id: '2000123456', name: 'Брокерский счёт', type: 'ACCOUNT_TYPE_TINKOFF',
-              cash: 42000.0, positionsCount: 5 },
+              cash: 42000.0, positionsCount: 6 },
             { broker: 'tinkoff', id: '2000123457', name: 'ИИС', type: 'ACCOUNT_TYPE_TINKOFF_IIS',
               cash: 8500.0, positionsCount: 2 },
             { broker: 'finam', id: 'FAB00012345', name: 'Finam Брокерский', type: '',
@@ -776,7 +789,7 @@ const WalletSync = (() => {
         const finamTotal = result.totals.byBroker.finam.value + 12300.0;
         result.accounts = [
             { broker: 'tinkoff', id: '2000123456', name: 'Брокерский счёт', type: 'ACCOUNT_TYPE_TINKOFF',
-              equity: round(tcsTotal * 0.78, 2), cash: 42000.0, futuresValue: 0, positionsCount: 5 },
+              equity: round(tcsTotal * 0.78, 2), cash: 42000.0, futuresValue: 382600.0, positionsCount: 6 },
             { broker: 'tinkoff', id: '2000123457', name: 'ИИС', type: 'ACCOUNT_TYPE_TINKOFF_IIS',
               equity: round(tcsTotal * 0.22, 2), cash: 8500.0, futuresValue: 0, positionsCount: 2 },
             { broker: 'finam', id: 'FAB00012345', name: 'Finam Брокерский', type: '',
@@ -1026,16 +1039,30 @@ const WalletSync = (() => {
                             futuresValue: round(futuresValue, 2), positionsCount: positions.length
                         });
 
-                        // В holdings идут только ценные бумаги (bond/share/etf);
+                        // В holdings идут бумаги и фьючерсы (bond/share/etf/futures);
                         // метаданные облигаций подтянутся после загрузки реестра
                         for (const p of positions) {
-                            if (['bond', 'share', 'etf'].indexOf(p.instrumentType) === -1 || p.quantity <= 0) continue;
+                            if (['bond', 'share', 'etf', 'futures'].indexOf(p.instrumentType) === -1 || p.quantity <= 0) continue;
 
                             let ticker, name, nominal, sector, couponPerYear, maturity;
                             if (p.instrumentType === 'bond') {
                                 ticker = p.ticker !== '' ? p.ticker : p.figi;
                                 name = ticker;
                                 nominal = 1000.0; sector = ''; couponPerYear = 0; maturity = '';
+                            } else if (p.instrumentType === 'futures') {
+                                // Стоимость = quantity × curPrice: GetPortfolio с
+                                // currency=RUB отдаёт цену фьючерса уже в ₽ за контракт
+                                // (тот же расчёт, что в NasdScanner). Имя — FindInstrument
+                                // по классу фьючерсов (SPBFUT и клоны). Купонов/дивидендов
+                                // у фьючерса нет — payments остаются пустыми.
+                                const fk = 'fut|' + p.ticker;
+                                if (p.ticker !== '' && nameCache[fk] === undefined) {
+                                    const info = await tcsClient.findInstrument(p.ticker, 'INSTRUMENT_TYPE_FUTURES', p.classCode);
+                                    nameCache[fk] = info != null && info.name != null ? info.name : p.ticker;
+                                }
+                                ticker = p.ticker !== '' ? p.ticker : p.figi;
+                                name = nameCache[fk] !== undefined ? nameCache[fk] : ticker;
+                                nominal = 0.0; sector = ''; couponPerYear = 0; maturity = '';
                             } else {
                                 const kind = p.instrumentType === 'share' ? 'INSTRUMENT_TYPE_SHARE' : 'INSTRUMENT_TYPE_ETF';
                                 if (p.ticker !== '' && nameCache[p.ticker] === undefined) {

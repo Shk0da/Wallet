@@ -45,8 +45,8 @@ const Charts = (() => {
         return lum > 0.55 ? '#333333' : '#ffffff';
     }
     const BROKER_COLORS = { tinkoff: C.tinkoff, finam: C.finam };
-    const TYPE_COLORS = { share: C.primary, bond: C.deep, etf: '#D08FFF' };
-    const TYPE_LABELS = { share: 'Акции', bond: 'Облигации', etf: 'ETF' };
+    const TYPE_COLORS = { share: C.primary, bond: C.deep, etf: '#D08FFF', futures: C.teal };
+    const TYPE_LABELS = { share: 'Акции', bond: 'Облигации', etf: 'ETF', futures: 'Фьючерсы' };
 
     // Базовая ширина viewBox; масштабируется равномерно. На телефоне рендерим
     // уже (360): при 640, ужатых CSS до ~340px, все подписи мельчают до ~53%.

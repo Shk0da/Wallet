@@ -566,8 +566,10 @@ function computeTotals(array $holdings, array $accounts): array {
     $in12m = (new DateTimeImmutable('+12 months'))->format('Y-m-d');
     $month0 = new DateTimeImmutable('first day of this month');
 
-    // Только ликвидные позиции с ненулевым количеством, по убыванию стоимости
-    $list = array_values(array_filter($holdings, static fn($h) => $h['quantity'] > 0 && $h['instrumentType'] !== 'futures'));
+    // Позиции с ненулевым количеством, по убыванию стоимости.
+    // Фьючерсы — полноценные holdings: их ₽-стоимость = quantity × curPrice
+    // (GetPortfolio T-Invest с currency=RUB отдаёт цену контракта в рублях).
+    $list = array_values(array_filter($holdings, static fn($h) => $h['quantity'] > 0));
     usort($list, static fn($a, $b) => $b['quantity'] * $b['curPrice'] <=> $a['quantity'] * $a['curPrice']);
 
     $value = 0.0; $cost = 0.0; $payingValue = 0.0; $payments12m = 0.0;
@@ -723,11 +725,17 @@ function buildMockPortfolio(): array {
          'quantity' => 850, 'avgPrice' => 7.24, 'curPrice' => 7.86, 'nominal' => 0.0, 'sector' => '',
          'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['finam'],
          'brokerQty' => ['tinkoff' => 0, 'finam' => 850], 'payments' => []],
+        // Фьючерс NASDAQ-100: цена = ₽ за контракт (2 × 191300 = 382 600),
+        // купонов/дивидендов нет — только вариационная маржа, её API не отдаёт
+        ['figi' => 'FUTNASDAQ1226', 'ticker' => 'NASD', 'name' => 'Фьючерс NASDAQ-100 12.26', 'instrumentType' => 'futures',
+         'quantity' => 2, 'avgPrice' => 178500.0, 'curPrice' => 191300.0, 'nominal' => 0.0, 'sector' => '',
+         'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['tinkoff'],
+         'brokerQty' => ['tinkoff' => 2, 'finam' => 0], 'payments' => []],
     ];
 
     $rawAccounts = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'cash' => 42000.0, 'positionsCount' => 5],
+         'cash' => 42000.0, 'positionsCount' => 6],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'cash' => 8500.0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
@@ -740,7 +748,7 @@ function buildMockPortfolio(): array {
     $finamTotal = $result['totals']['byBroker']['finam']['value'] + 12300.0;
     $result['accounts'] = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 0, 'positionsCount' => 5],
+         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 382600.0, 'positionsCount' => 6],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'equity' => round($tcsTotal * 0.22, 2), 'cash' => 8500.0, 'futuresValue' => 0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
@@ -985,14 +993,26 @@ if ($tcsEnabled) {
                 'futuresValue' => round($futuresValue, 2), 'positionsCount' => count($positions),
             ];
 
-            // В holdings идут только ценные бумаги (bond/share/etf); метаданные облигаций — после реестра
+            // В holdings идут бумаги и фьючерсы (bond/share/etf/futures); метаданные облигаций — после реестра
             foreach ($positions as $p) {
-                if (!in_array($p['instrumentType'], ['bond', 'share', 'etf'], true) || $p['quantity'] <= 0) continue;
+                if (!in_array($p['instrumentType'], ['bond', 'share', 'etf', 'futures'], true) || $p['quantity'] <= 0) continue;
 
                 if ($p['instrumentType'] === 'bond') {
                     $ticker = $p['ticker'] !== '' ? $p['ticker'] : $p['figi'];
                     $name = $ticker;
                     $nominal = 1000.0; $sector = ''; $couponPerYear = 0; $maturity = '';
+                } elseif ($p['instrumentType'] === 'futures') {
+                    // Стоимость = quantity × curPrice: GetPortfolio с currency=RUB отдаёт
+                    // цену фьючерса уже в ₽ за контракт (тот же расчёт, что в NasdScanner).
+                    // Имя — FindInstrument по классу фьючерсов; купонов/дивидендов нет.
+                    $fk = 'fut|' . $p['ticker'];
+                    if ($p['ticker'] !== '' && !isset($nameCache[$fk])) {
+                        $info = $tcsClient->findInstrument($p['ticker'], 'INSTRUMENT_TYPE_FUTURES', $p['classCode']);
+                        $nameCache[$fk] = $info['name'] ?? $p['ticker'];
+                    }
+                    $ticker = $p['ticker'] !== '' ? $p['ticker'] : $p['figi'];
+                    $name = $nameCache[$fk] ?? $ticker;
+                    $nominal = 0.0; $sector = ''; $couponPerYear = 0; $maturity = '';
                 } else {
                     $kind = $p['instrumentType'] === 'share' ? 'INSTRUMENT_TYPE_SHARE' : 'INSTRUMENT_TYPE_ETF';
                     if ($p['ticker'] !== '' && !isset($nameCache[$p['ticker']])) {

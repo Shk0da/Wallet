@@ -681,12 +681,30 @@ const accQtys = Array.from(doc.querySelectorAll('#holdingsTable tbody tr td:nth-
     .map(td => td.textContent.trim());
 ok(accQtys[0] === '100' && accQtys[1] === '300',
     'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300)');
-ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 7');
+ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 8');
 doc.querySelector('#accFilter .acc-chip[data-account=""]').click();
-ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 7,
-    'активы: «Все счета» возвращает все 7 позиций');
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 8,
+    'активы: «Все счета» возвращает все 8 позиций');
 ok(offlineWindow.localStorage.getItem('walletHtAccount') === '',
     'активы: сброс фильтра сохранён (walletHtAccount)');
+
+section('Фьючерсы');
+// Мок несёт NASD (2 контракта × 191300): фьючерс — полноценный holding —
+// входит в стоимость портфеля, диверсификацию и фильтр по счетам
+const pfFut = JSON.parse(offlineWindow.localStorage.getItem('walletPortfolio'));
+const futH = (pfFut.holdings || []).find(h => h.instrumentType === 'futures');
+ok(!!futH && futH.ticker === 'NASD' && futH.quantity === 2,
+    'фьючерсы: NASD в holdings (quantity 2)');
+ok(pfFut.totals.byType && Math.round(pfFut.totals.byType.futures) === 382600,
+    'фьючерсы: стоимость 2 × 191300 в byType (' + (pfFut.totals.byType ? pfFut.totals.byType.futures : '?') + ')');
+ok(!!(pfFut.accounts || []).find(a => a.futuresValue === 382600),
+    'фьючерсы: futuresValue на счёте брокера');
+const futChip = doc.querySelector('#holdingsTable .ht-type-chip.t-futures');
+ok(!!futChip && futChip.textContent === 'Фьючерсы',
+    'фьючерсы: чип типа в «Активах» с меткой «Фьючерсы»');
+ok(syncSrc.indexOf("'futures'].indexOf(p.instrumentType)") !== -1
+    && syncSrc.indexOf('.filter(h => h.quantity > 0);') !== -1,
+    'фьючерсы: T-Invest пускает futures в holdings, computeTotals не режет их');
 
 section('Возврат из фона: лечение портфеля из снапшота');
 // Фоновая синхронизация обновила снапшот-файл, а localStorage живой страницы
