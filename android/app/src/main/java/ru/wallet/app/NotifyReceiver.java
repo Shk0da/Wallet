@@ -106,6 +106,11 @@ public class NotifyReceiver extends BroadcastReceiver {
 
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        // Пуш о платежах дня — про календарь: открываем сразу на нём
+        // (extra читает MainActivity, переключает хук __walletOpenView).
+        // requestCode остаётся 0: у пуша синхронизации свой (1), так что
+        // extras друг друга через FLAG_UPDATE_CURRENT не затирают.
+        open.putExtra("view", "calendar");
         PendingIntent pi = PendingIntent.getActivity(ctx, 0, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 

@@ -751,6 +751,9 @@ ok(svcSrc.indexOf('setContentIntent(openAppPi())') !== -1
     'APK: итоговый пуш синхронизации открывает экран портфеля');
 ok(/PendingIntent\.getActivity\(this, 1, open/.test(svcSrc),
     'APK: свой requestCode у пуша синхронизации (extras не конфликтуют с утренним)');
+ok(readFileSync(path.join(ROOT, 'android/app/src/main/java/ru/wallet/app/NotifyReceiver.java'), 'utf8')
+        .indexOf('putExtra("view", "calendar")') !== -1,
+    'APK: утренний пуш о платежах открывает экран календаря');
 
 section('Автономный бандл: экспорт');
 offlineWindow.WalletBackup.exportBackup();
