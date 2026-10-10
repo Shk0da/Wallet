@@ -774,6 +774,25 @@ ok((pfFut.holdings || []).length === 10 && pfFut.totals.cash === 62800,
 ok(Math.round(pfFut.totals.byType.currency) === 102100,
     'рубли: byType.currency без кэша (строка — только отображение)');
 
+section('Диверсификация: свободные рубли — в валютный срез');
+// Колесо «Диверсификация» строилось только из byType — свободные рубли
+// брокеров (totals.cash) выпадали из структуры портфеля. Теперь валютный
+// срез = валютные позиции + кэш (как строка RUB в «Активах», чисто
+// отображение: byType и стоимость портфеля в конвейере не меняются)
+const divRows = Array.from(doc.querySelectorAll('#chartTypes table tr'))
+    .filter(tr => tr.children.length === 3 && /\d/.test(tr.children[1].textContent));
+const num = td => parseFloat(td.textContent.replace(/[^\d.]/g, ''));
+const divCur = divRows.find(tr => tr.children[0].textContent.indexOf('Валюты') !== -1);
+ok(!!divCur && Math.round(num(divCur.children[1])) === 164900,
+    'диверсификация: «Валюты» = USD+CNY 102 100 + кэш 62 800 = ' +
+    (divCur ? divCur.children[1].textContent.trim() : 'НЕТ'));
+const divSum = divRows.reduce((s, tr) => s + num(tr.children[1]), 0);
+ok(Math.abs(divSum - (pfFut.totals.value + pfFut.totals.cash)) < 1,
+    'диверсификация: срезы в сумме = стоимость + кэш (согласованы с центром колеса)');
+ok(!!doc.querySelector('#chartTypes .donut-svg')
+    || !!doc.querySelector('#chartTypes .chart-table-btn'),
+    'диверсификация: карточка отрендерена');
+
 section('Finam: типы инструментов (фонды и фьючерсы)');
 // Finam не отдаёт тип инструмента, а площадка MISX одна на акции и фонды.
 // Тип: фьючерс по площадке символа (@RTSX) или коду (SiZ5), облигация по

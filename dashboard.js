@@ -396,20 +396,27 @@
     function renderTypeDonut(p) {
         const container = $('chartTypes');
         const byType = p.totals.byType || {};
+        // Свободные рубли — тоже валюта: кэш брокеров прибавляем к валютному
+        // срезу. Как и строка «RUB» в «Активах», это чисто отображение —
+        // конвейер и byType не меняются (стоимость портфеля, история и
+        // подпись KPI «+ кэш» едут без кэша, как раньше).
+        const cur = (byType.currency || 0) + (p.totals.cash || 0);
         const order = ['share', 'bond', 'etf', 'futures', 'currency'];
         const extra = Object.keys(byType).filter(k => !order.includes(k) && byType[k] > 0);
+        const val = k => (k === 'currency' ? cur : byType[k]);
         const data = [...order, ...extra]
-            .filter(k => byType[k] > 0)
+            .filter(k => val(k) > 0)
             .map((k, i) => ({
                 label: Charts.TYPE_LABELS[k] || k,
-                value: byType[k],
+                value: val(k),
                 color: Charts.TYPE_COLORS[k] || Charts.CATEGORICAL[i % Charts.CATEGORICAL.length]
             }));
         if (data.length === 0) { container.textContent = 'Нет позиций'; return; }
         withTableToggle(container, Charts.donut({
             data,
             centerLabel: 'активов',
-            centerValue: Charts.fmt.compact(p.totals.value)
+            // центр = сумма срезов: колесо теперь включает кэш
+            centerValue: Charts.fmt.compact(p.totals.value + (p.totals.cash || 0))
         }), { defaultTable: true });
     }
 
