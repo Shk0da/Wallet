@@ -426,6 +426,24 @@ const WalletSync = (() => {
         return msg !== '' ? ' — ' + msg.slice(0, 140) : '';
     }
 
+    // Кэш Finam — СПИСОК балансов по валютам [{currency_code, units, nanos}],
+    // причём рублей бывает несколько записей сразу (торговый + клиринговый)
+    // — суммируем их. Прочие валюты без курса не оцениваем (берём RUB).
+    // Совместимость: одиночный объект {units, nanos}/{value} тоже принимаем.
+    function finamCashRub(cash) {
+        if (cash === null || cash === undefined) return 0.0;
+        if (!Array.isArray(cash)) return cash.value !== undefined ? vv(cash) : qv(cash);
+        let sum = 0.0;
+        for (const c of cash) {
+            if (!c || typeof c !== 'object') continue;
+            const code = String(c.currency_code == null
+                ? (c.currencyCode == null ? '' : c.currencyCode) : c.currency_code).toUpperCase();
+            if (code !== 'RUB') continue;
+            sum += c.value !== undefined ? vv(c) : qv(c);
+        }
+        return sum;
+    }
+
     class FinamClient {
         constructor(secret, timeout, insecure) {
             this.secret = secret;
@@ -477,7 +495,7 @@ const WalletSync = (() => {
             }
             return {
                 equity: vv(data && data.equity !== undefined ? data.equity : null),
-                cash: qv(data && data.cash !== undefined ? data.cash : null),
+                cash: finamCashRub(data && data.cash),
                 positions: positions
             };
         }
@@ -1500,7 +1518,7 @@ const WalletSync = (() => {
         }
     }
 
-    return { runSync, currencyMeta, finamSymbolType, parseIssMeta, mergeFinamPosition };
+    return { runSync, currencyMeta, finamSymbolType, parseIssMeta, mergeFinamPosition, finamCashRub };
 })();
 window.WalletSync = WalletSync;
 

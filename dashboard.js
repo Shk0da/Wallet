@@ -1268,6 +1268,17 @@
         if (state.syncing) return;
         setSyncUI('run', mock ? 'Генерация демо-данных…' : 'Подключение…');
 
+        // Спиннер должен УСПЕТЬ отрисоваться до начала пайплайна: синхронный
+        // WalletAndroid.http блокирует поток JS на весь сетевой запрос, и без
+        // этой паузы первый кадр анимации появляется только после ответа.
+        await new Promise(resolve => {
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 30)));
+            } else {
+                setTimeout(resolve, 60);
+            }
+        });
+
         // Итог прогона: возвращаем вызывающему (фоновая автосинхронизация
         // показывает его пушем через WalletAndroid.syncDone)
         let outcome = { ok: false, text: 'Данные не обновлены' };

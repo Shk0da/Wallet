@@ -436,6 +436,25 @@ final class FinamClient {
         )));
     }
 
+    /** Кэш Finam — список балансов по валютам; рублей бывает несколько
+     *  записей (торговый + клиринговый) — суммируем только RUB.
+     *  Совместимость: одиночный баланс {units, nanos}/{value} тоже принимаем. */
+    private static function cashRub($cash): float {
+        if ($cash === null) return 0.0;
+        if (!is_array($cash)) return qv($cash);
+        if (isset($cash['currency_code']) || isset($cash['units']) || isset($cash['value'])) {
+            return isset($cash['value']) ? vv($cash) : qv($cash);
+        }
+        $sum = 0.0;
+        foreach ($cash as $c) {
+            if (!is_array($c)) continue;
+            $code = strtoupper((string)($c['currency_code'] ?? $c['currencyCode'] ?? ''));
+            if ($code !== 'RUB') continue;
+            $sum += isset($c['value']) ? vv($c) : qv($c);
+        }
+        return $sum;
+    }
+
     /** Счёт: equity, cash, позиции (цены облигаций в % от номинала) */
     public function getAccount(string $accountId): array {
         [$code, $body] = httpCall('GET', FINAM_BASE . '/v1/accounts/' . rawurlencode($accountId), null,
@@ -454,7 +473,7 @@ final class FinamClient {
         }
         return [
             'equity' => vv($data['equity'] ?? null),
-            'cash' => qv($data['cash'] ?? null),
+            'cash' => self::cashRub($data['cash'] ?? null),
             'positions' => $positions,
         ];
     }

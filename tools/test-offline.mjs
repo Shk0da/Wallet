@@ -814,6 +814,31 @@ ok(phpSrcCur.indexOf('function finamSymbolType') !== -1 && phpSrcCur.indexOf('fu
     && phpSrcCur.indexOf('ISS_META_CACHE') !== -1 && phpSrcCur.indexOf('iss.meta=off') !== -1,
     'finam: sync.php — зеркальные типы/ISS-справочник');
 
+section('Finam: остаток рублей (кэш)');
+// GET /v1/accounts отдаёт cash СПИСКОМ балансов по валютам, причём рублей
+// бывает несколько записей сразу (торговый + клиринговый) — раньше qv()
+// молча возвращал 0 (массив — не {units, nano}) и рубли Finam пропадали
+// из строки «RUB» в «Активах» и из totals.cash
+ok(Math.abs(WS.finamCashRub([{ currency_code: 'RUB', units: '3562', nanos: 570000000 }]) - 3562.57) < 1e-6,
+    'finam-кэш: баланс по валютам → 3562.57 ₽ (живая форма API)');
+ok(Math.abs(WS.finamCashRub([
+    { currency_code: 'RUB', units: '573', nanos: 910000000 },
+    { currency_code: 'RUB', units: '9', nanos: 0 },
+    { currency_code: 'USD', units: '100', nanos: 0 }
+]) - 582.91) < 1e-6,
+    'finam-кэш: несколько RUB-записей суммируются (573.91 + 9), USD не считаем');
+ok(Math.abs(WS.finamCashRub({ units: '42', nanos: 100000000 }) - 42.1) < 1e-6
+    && Math.abs(WS.finamCashRub({ value: '123.45' }) - 123.45) < 1e-6,
+    'finam-кэш: одиночный баланс {units,nanos}/{value} — совместимость');
+ok(WS.finamCashRub(null) === 0 && WS.finamCashRub([]) === 0,
+    'finam-кэш: нет данных → 0');
+ok(syncSrc.indexOf('cash: finamCashRub(data && data.cash)') !== -1,
+    'finam-кэш: getAccount считает кэш через finamCashRub');
+ok(phpSrcCur.indexOf('function cashRub') !== -1 && phpSrcCur.indexOf("self::cashRub($data['cash'] ?? null)") !== -1,
+    'finam-кэш: sync.php — зеркальный cashRub в getAccount');
+ok(dashSrc.indexOf('requestAnimationFrame(() => requestAnimationFrame') !== -1,
+    'синк: кадр на отрисовку спиннера до блокирующего моста (анимация сразу)');
+
 section('Плашка роста: периоды только по глубине истории');
 // Плашка в KPI «Стоимость» больше не показывает минус-заглушки «— за месяц»:
 // доступны только периоды, до которых доросла история (базовая точка не новее
