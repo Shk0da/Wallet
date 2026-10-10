@@ -653,7 +653,29 @@
         const container = $('holdingsTable');
         if (!container) return;
         container.textContent = '';
-        const all = p.holdings || [];
+        const all = (p.holdings || []).slice();
+        // Рублёвый кэш — строка «RUB» в «Активах»: деньги у брокеров тоже
+        // актив. Чисто отображение: в итоги портфеля кэш уже входит отдельно
+        // (totals.cash + подзаголовок KPI «+ кэш»), стоимость и история
+        // не меняются, доля строки считается от общей стоимости.
+        const cashTotal = p.totals && p.totals.cash || 0;
+        if (cashTotal > 0) {
+            const rubQty = {};
+            const rubSrc = [];
+            for (const a of p.accounts || []) {
+                if (!(a.cash > 0)) continue;
+                rubQty[a.id] = a.cash;
+                const src = a.broker === 'tinkoff' ? 'tcs' : a.broker;
+                if (rubSrc.indexOf(src) === -1) rubSrc.push(src);
+            }
+            all.push({
+                figi: 'RUB000UTSTOM', ticker: 'RUB', name: 'Российский рубль',
+                instrumentType: 'currency',
+                quantity: cashTotal, avgPrice: 1, curPrice: 1,
+                value: cashTotal, cost: null, pnl: null, pnlPct: null,
+                sources: rubSrc, accountQty: rubQty, payments: [], paymentsNext12m: 0
+            });
+        }
         if (all.length === 0) {
             $('htCount').textContent = '0';
             const note = document.createElement('p');
@@ -1526,6 +1548,9 @@
         if (nav) nav.addEventListener('click', (e) => {
             const btn = e.target instanceof Element ? e.target.closest('.view-btn') : null;
             if (btn) setView(btn.dataset.view);
+            // Таб «Портфель» всегда ведёт на главный раздел (Обзор): кнопка —
+            // «домой» из любого подраздела; сами разделы переключаются из меню ☰
+            if (btn && btn.dataset.view === 'dashboard') setPfSection('overview');
         });
         let saved = null;
         try { saved = localStorage.getItem('walletView'); } catch (e) { /* ignore */ }

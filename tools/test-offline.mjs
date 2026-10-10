@@ -224,6 +224,13 @@ ok(doc.body.classList.contains('dashboard-mode'), 'раздел портфеля
 ok(doc.getElementById('dashboardContent').getAttribute('data-section') === 'assets'
     && offlineWindow.localStorage.getItem('walletPfSection') === 'assets',
     '«Активы» → data-section=assets и запомнен');
+// Таб «Портфель» внизу — кнопка «домой»: из любого подраздела ведёт на
+// «Обзор», а не на последний открытый раздел (разделы — только из меню ☰)
+doc.querySelector('#appDrawer .drawer-item[data-nav="pf-payouts"]').click();
+doc.querySelector('.view-btn[data-view="dashboard"]').click();
+ok(doc.getElementById('dashboardContent').getAttribute('data-section') === 'overview'
+    && offlineWindow.localStorage.getItem('walletPfSection') === 'overview',
+    'таб «Портфель» → сброс на «Обзор» (не последний раздел)');
 
 // Сервисные кнопки шапки (только экран календаря): 🏷 и ↩️
 ok(offlineWindow.getComputedStyle(doc.getElementById('undoBtn')).display === 'none',
@@ -670,21 +677,24 @@ ok(srcIndex.indexOf('border-radius: 14px;') !== -1
 
 section('Активы: фильтр по счетам');
 // Чипы строятся из portfolio.accounts (мок: 3 непустых счёта) и режут
-// таблицу по holding.accountQty — брокер ≠ счёт, позиция бывает на двух счетах
+// таблицу по holding.accountQty — брокер ≠ счёт, позиция бывает на двух счетах.
+// Строка «RUB» (кэш) тоже несёт accountQty — на счёте виден его кэш
 const accChips = doc.querySelectorAll('#accFilter .acc-chip');
 ok(accChips.length === 4 && accChips[0].dataset.account === '',
     'активы: чипы «Все счета» + 3 счёта мока (' + accChips.length + ')');
 doc.querySelector('#accFilter .acc-chip[data-account="2000123457"]').click();
-ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 2,
-    'активы: счёт «ИИС» — только его 2 позиции');
+const iisRows = doc.querySelectorAll('#holdingsTable tbody tr');
+ok(iisRows.length === 3,
+    'активы: счёт «ИИС» — 2 бумаги + рублёвый кэш (' + iisRows.length + ')');
 const accQtys = Array.from(doc.querySelectorAll('#holdingsTable tbody tr td:nth-child(2)'))
     .map(td => td.textContent.trim());
-ok(accQtys[0] === '100' && accQtys[1] === '300',
-    'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300)');
-ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 10');
+ok(accQtys.indexOf('100') !== -1 && accQtys.indexOf('300') !== -1
+    && accQtys.some(t => t.replace(/\s/g, '') === '8500'),
+    'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300 + кэш 8500)');
+ok(doc.getElementById('htCount').textContent === '3', 'активы: счётчик — видно 3 строки');
 doc.querySelector('#accFilter .acc-chip[data-account=""]').click();
-ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 10,
-    'активы: «Все счета» возвращает все 10 позиций');
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 11,
+    'активы: «Все счета» возвращает все 10 позиций + RUB');
 ok(offlineWindow.localStorage.getItem('walletHtAccount') === '',
     'активы: сброс фильтра сохранён (walletHtAccount)');
 
@@ -741,6 +751,29 @@ ok(!!cmGold && cmGold.ticker === 'GLD' && cmGold.name === 'Золото',
     'валюты: металлы — currency-инструменты (золото → GLD «Золото»)');
 ok(phpSrcCur.indexOf("CURRENCY_FIGIS") !== -1 && phpSrcCur.indexOf("'BBG0013HRTL0' => 'CNY'") !== -1,
     'валюты: sync.php — зеркальная карта figi→ISO');
+
+section('Рубли в активах');
+// Рублёвый кэш брокеров — строка «RUB» в таблице «Активы». Чисто
+// отображение: строку добавляет renderHoldingsTable, в pipeline она
+// не попадает — стоимость портфеля и byType не меняются (кэш уже учтён
+// в totals.cash и подзаголовке KPI «+ кэш»)
+const rubRows = Array.from(doc.querySelectorAll('#holdingsTable tbody tr'))
+    .filter(tr => tr.querySelector('.ht-ticker') && tr.querySelector('.ht-ticker').textContent === 'RUB');
+ok(rubRows.length === 1 && rubRows[0].querySelector('.ht-name').textContent === 'Российский рубль',
+    'рубли: строка «RUB / Российский рубль» в «Активах»');
+ok(!!rubRows[0].querySelector('.ht-type-chip.t-currency')
+    && rubRows[0].querySelector('.ht-type-chip.t-currency').textContent === 'Валюты',
+    'рубли: чип типа «Валюты»');
+const rubQty = rubRows[0].querySelectorAll('td')[1].textContent.trim();
+ok(rubQty.replace(/\s/g, '') === '62800',
+    'рубли: количество = весь кэш брокеров (42000+8500+12300 = ' + rubQty + ')');
+ok(rubRows[0].querySelectorAll('.ht-broker-dot').length === 2,
+    'рубли: точки обоих брокеров (tcs + finam)');
+ok((pfFut.holdings || []).length === 10 && pfFut.totals.cash === 62800,
+    'рубли: строка не в pipeline — holdings по-прежнему 10, кэш в totals.cash');
+ok(Math.round(pfFut.totals.byType.currency) === 102100,
+    'рубли: byType.currency без кэша (строка — только отображение)');
+/* FINAM-TYPING-PLACEHOLDER */
 
 section('Плашка роста: периоды только по глубине истории');
 // Плашка в KPI «Стоимость» больше не показывает минус-заглушки «— за месяц»:
