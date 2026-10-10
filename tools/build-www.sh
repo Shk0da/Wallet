@@ -100,9 +100,9 @@ for f in standalone.js sync-client.js auth.js app.js backup.js settings.js chart
 done
 
 # ---------- Контроль автономности: внешних URL быть не должно ----------
-# Разрешены только рантайм-эндпоинты брокеров (это сама синхронизация, а не
-# подгрузка ресурсов) и SVG-namespace.
-API_HOSTS='invest-public-api\.tbank\.ru|api\.finam\.ru'
+# Разрешены только рантайм-эндпоинты брокеров и справочника MOEX ISS (это
+# сама синхронизация, а не подгрузка ресурсов) и SVG-namespace.
+API_HOSTS='invest-public-api\.tbank\.ru|api\.finam\.ru|iss\.moex\.com'
 LEAKS=$(grep -R -o 'https\?://[^"'"'"' <>)]*' "$OUT" | grep -v 'www.w3.org' | grep -Ev "$API_HOSTS" || true)
 if [ -n "$LEAKS" ]; then
     echo "ОШИБКА: внешние URL в бандле:" >&2

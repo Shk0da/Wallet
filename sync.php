@@ -27,6 +27,7 @@ ignore_user_abort(false);
 const SETTINGS_FILE   = __DIR__ . '/settings.json';
 const PORTFOLIO_FILE  = __DIR__ . '/portfolio.json';
 const BONDS_CACHE     = __DIR__ . '/bonds-cache.json';
+const ISS_META_CACHE  = __DIR__ . '/iss-meta-cache.json';
 const LOCK_FILE       = __DIR__ . '/sync.lock';
 
 const TCS_BASE   = 'https://invest-public-api.tbank.ru/rest/tinkoff.public.invest.api.contract.v1.';
@@ -146,6 +147,20 @@ function tickerFromSymbol(string $symbol): string {
  *  Один инструмент на разных площадках имеет РАЗНЫЕ figi — для слияния сравниваем базовый тикер. */
 function baseTicker(string $ticker): string {
     return explode('@', $ticker)[0];
+}
+
+/** Площадка из Finam-символа "ONZ6@RTSX" → "RTSX". RTSX/RFUD/FORTS —
+ *  срочный рынок (фьючерсы); TQOB/TQCB — облигации; MISX одна на акции
+ *  и фонды (SBER@MISX и FMMM@MISX) — её типом не считаем. */
+function boardFromSymbol(string $symbol): string {
+    $parts = explode('@', $symbol);
+    return count($parts) > 1 ? $parts[1] : '';
+}
+
+/** Finam-символ похож на код фьючерса MOEX? Буквы + код месяца поставки
+ *  (FGHJKMNQUVXZ) + цифра года: SiZ5, ONZ6, MIXZ5. Подстраховка к площадке. */
+function isFuturesSymbol(string $ticker): bool {
+    return (bool)preg_match('/^[A-Z]{1,4}[FGHJKMNQUVXZ][0-9]$/', strtoupper($ticker));
 }
 
 // ---------- Прогресс ----------
@@ -503,6 +518,82 @@ function isBondSymbol(string $ticker): bool {
     return strlen($ticker) >= 10 && ctype_alnum($ticker);
 }
 
+/** Тип позиции Finam без сети: фьючерсы — по площадке символа (@RTSX) или
+ *  коду (SiZ5), облигации — по ISIN-тикету, остальное — акции; фонды
+ *  уточняются справочником MOEX ISS (mergeFinamPosition + issMetaFor). */
+function finamSymbolType(string $symbol, string $ticker): string {
+    $board = boardFromSymbol($symbol);
+    if ($board === 'RTSX' || $board === 'RFUD' || $board === 'FORTS' || $board === 'FUT'
+        || isFuturesSymbol($ticker)) return 'futures';
+    if (isBondSymbol($ticker)) return 'bond';
+    return 'share';
+}
+
+// ---------- Справочник MOEX ISS: тип/имя для позиций Finam ----------
+// Finam не отдаёт тип инструмента, а площадка MISX одна на акции и фонды
+// (SBER@MISX и FMMM@MISX). Публичный справочник MOEX (без авторизации —
+// не зависит от брокеров): SHORTNAME фондов кончается на «ETF» (FMMM ETF,
+// TMOS ETF), фьючерсы торгуются на RFUD/FORTS. Разбор отделён от сети —
+// тестируется офлайн.
+
+/** Ответ ISS {description, boards} → ['type'=>'etf'|'futures'|'share', 'name'] (null = не распознан) */
+function parseIssMeta(?array $data): ?array {
+    if ($data === null) return null;
+    $desc = [];
+    foreach (($data['description']['data'] ?? []) as $row) {
+        if (is_array($row) && isset($row[0])) $desc[(string)$row[0]] = isset($row[2]) ? (string)$row[2] : '';
+    }
+    if (!isset($desc['SECID'])) return null;
+    $short = $desc['SHORTNAME'] ?? '';
+    $type = preg_match('/ETF$/i', trim($short)) ? 'etf' : 'share';
+    $columns = $data['boards']['columns'] ?? null;
+    $bi = is_array($columns) ? array_search('boardid', $columns, true) : false;
+    if ($bi !== false) {
+        foreach (($data['boards']['data'] ?? []) as $b) {
+            $bd = (is_array($b) && isset($b[$bi])) ? (string)$b[$bi] : '';
+            if ($bd === 'RFUD' || $bd === 'FORTS' || $bd === 'RTSX' || str_starts_with($bd, 'FUT')) {
+                $type = 'futures';
+                break;
+            }
+        }
+    }
+    $name = $desc['NAME'] ?? '';
+    if ($name === '') $name = $short;
+    return ['type' => $type, 'name' => $name];
+}
+
+/** Тикеры → тип/имя через справочник MOEX ISS с суточным файловым кэшем
+ *  (отрицательный ответ тоже кэшируется — 404 не дёргает MOEX заново). */
+function issMetaFor(array $tickers, float $timeout, bool $insecure, int $ttl): array {
+    $cache = ['cachedAt' => date('c'), 'tickers' => []];
+    if (is_file(ISS_META_CACHE)) {
+        $parsed = json_decode((string)file_get_contents(ISS_META_CACHE), true);
+        if (is_array($parsed) && isset($parsed['tickers']) && is_array($parsed['tickers'])) $cache = $parsed;
+    }
+    $fresh = (time() - strtotime((string)$cache['cachedAt'])) < $ttl;
+    $out = [];
+    foreach ($tickers as $t) {
+        if (isset($cache['tickers'][$t]) && $fresh) $out[$t] = $cache['tickers'][$t];
+    }
+    $missing = array_values(array_filter($tickers, static fn($t) => !isset($out[$t])));
+    foreach ($missing as $t) {
+        $m = null;
+        try {
+            [$code, $body] = httpCall('GET', 'https://iss.moex.com/iss/securities/' . rawurlencode($t) . '.json?iss.meta=off', null, [], $timeout, $insecure);
+            if ($code === 200) $m = parseIssMeta(json_decode($body, true));
+        } catch (Throwable $e) {
+            $m = null; // сеть/таймаут — не фатально, останутся эвристики
+        }
+        $out[$t] = $m ?? ['type' => null, 'name' => null];
+        $cache['tickers'][$t] = $out[$t];
+    }
+    if ($missing !== []) {
+        $cache['cachedAt'] = date('c');
+        @file_put_contents(ISS_META_CACHE, json_encode($cache, JSON_UNESCAPED_UNICODE));
+    }
+    return $out;
+}
+
 /** Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi.
  *  Figi трёх родов: «самоописанные» (USD000UTSTOM, EUR000UTSTOM — ISO в
  *  префиксе) и биржевые BBG…/TCS…, где префикс про валюту не говорит:
@@ -540,19 +631,32 @@ function currencyMeta(string $figi): array {
 
 /**
  * Конвертация и слияние позиции Finam в общий список holdings.
- * Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как в kts).
+ * Тип без сети — finamSymbolType (фьючерс по площадке @RTSX или коду,
+ * облигация по ISIN-тикеру, остальное — акции); справочник MOEX ISS
+ * (meta) уточняет фонды («…ETF» в SHORTNAME) и даёт человеческое имя.
+ * Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как
+ * в kts); акции, фонды и фьючерсы Finam отдаёт уже в ₽ за штуку —
+ * множить на номинал их нельзя (иначе ×10).
  */
-function mergeFinamPosition(array &$holdings, array $pos, ?array $bond): void {
+function mergeFinamPosition(array &$holdings, array $pos, ?array $bond, ?array $meta = null): void {
     $ticker = tickerFromSymbol($pos['symbol']);
-    $nominal = $bond['nominal'] ?? 1000.0;
-    $avgPriceRub = $pos['averagePrice'] * $nominal / 100.0;
-    $curPriceRub = $pos['currentPrice'] * $nominal / 100.0;
-    $key = ($bond['figi'] ?? '') !== '' ? $bond['figi'] : $ticker;
+    $type = finamSymbolType($pos['symbol'], $ticker);
+    if ($meta !== null && ($meta['type'] ?? null) !== null) {
+        // площадка MISX одна на акции и фонды — верим ISS; фьючерсы ISS
+        // только подтверждает (RTSX уже распознан по символу)
+        if ($type === 'share') $type = $meta['type'];
+        elseif ($meta['type'] === 'futures') $type = 'futures';
+    }
+    $nominal = ($type === 'bond' && $bond !== null && isset($bond['nominal'])) ? $bond['nominal'] : 1000.0;
+    $scale = $type === 'bond' ? $nominal / 100.0 : 1.0;
+    $avgPriceRub = $pos['averagePrice'] * $scale;
+    $curPriceRub = $pos['currentPrice'] * $scale;
+    $key = (($bond['figi'] ?? '') !== '') ? $bond['figi'] : $ticker;
 
     // figi-ключ не найден — пробуем слить по базовому тикеру и типу (один инструмент = разные figi на разных площадках)
     if (!isset($holdings[$key])) {
         foreach ($holdings as $k => $h) {
-            if (baseTicker($h['ticker']) === $ticker && $h['instrumentType'] === ($bond !== null || isBondSymbol($ticker) ? 'bond' : 'share')) {
+            if (baseTicker($h['ticker']) === $ticker && $h['instrumentType'] === $type) {
                 $key = $k;
                 break;
             }
@@ -567,25 +671,37 @@ function mergeFinamPosition(array &$holdings, array $pos, ?array $bond): void {
             : $h['avgPrice'];
         $h['quantity'] = $newQty;
         $h['brokerQty']['finam'] = ($h['brokerQty']['finam'] ?? 0) + $pos['quantity'];
+        $accId = (string)($pos['accountId'] ?? '');
+        if ($accId !== '') {
+            $h['accountQty'] = $h['accountQty'] ?? [];
+            $h['accountQty'][$accId] = ($h['accountQty'][$accId] ?? 0) + $pos['quantity'];
+        }
         $h['sources'][] = 'finam';
         $h['sources'] = array_values(array_unique($h['sources']));
         $holdings[$key] = $h;
         return;
     }
+    $finamAccQty = [];
+    $accId = (string)($pos['accountId'] ?? '');
+    if ($accId !== '') $finamAccQty[$accId] = $pos['quantity'];
+    $name = $ticker;
+    if ($bond !== null && isset($bond['name'])) $name = $bond['name'];
+    elseif ($meta !== null && ($meta['name'] ?? '') !== '') $name = $meta['name'];
     $holdings[$key] = [
         'figi' => $bond['figi'] ?? '',
         'ticker' => $ticker,
-        'name' => $bond['name'] ?? $ticker,
-        'instrumentType' => $bond !== null ? 'bond' : (isBondSymbol($ticker) ? 'bond' : 'share'),
+        'name' => $name,
+        'instrumentType' => $type,
         'quantity' => $pos['quantity'],
         'avgPrice' => $avgPriceRub,
         'curPrice' => $curPriceRub,
-        'nominal' => $nominal,
+        'nominal' => $type === 'bond' ? $nominal : 0.0,
         'sector' => $bond['sector'] ?? '',
         'couponPerYear' => $bond['couponPerYear'] ?? 0,
         'maturityDate' => $bond['maturityDate'] ?? '',
         'sources' => ['finam'],
         'brokerQty' => ['tinkoff' => 0, 'finam' => $pos['quantity']],
+        'accountQty' => $finamAccQty,
         'payments' => [],
     ];
 }
@@ -992,6 +1108,7 @@ if ($finamEnabled) {
             ];
             foreach ($acc['positions'] as $pos) {
                 if ($pos['quantity'] <= 0) continue;
+                $pos['accountId'] = $id; // фильтр «Активы» по счетам
                 $finamRawPositions[] = $pos;
                 $finamPositionsByTicker[tickerFromSymbol($pos['symbol'])] = $pos['symbol'];
             }
@@ -1110,6 +1227,8 @@ if ($tcsEnabled) {
                     }
                     $h['quantity'] = $newQty;
                     $h['brokerQty']['tinkoff'] = ($h['brokerQty']['tinkoff'] ?? 0) + $p['quantity'];
+                    $h['accountQty'] = $h['accountQty'] ?? [];
+                    $h['accountQty'][$acc['id']] = ($h['accountQty'][$acc['id']] ?? 0) + $p['quantity'];
                     $h['sources'][] = 'tcs';
                     $h['sources'] = array_values(array_unique($h['sources']));
                     $holdings[$key] = $h;
@@ -1123,6 +1242,7 @@ if ($tcsEnabled) {
                         'nominal' => $nominal, 'sector' => $sector, 'couponPerYear' => $couponPerYear,
                         'maturityDate' => $maturity,
                         'sources' => ['tcs'], 'brokerQty' => ['tinkoff' => $p['quantity'], 'finam' => 0],
+                        'accountQty' => [$acc['id'] => $p['quantity']],
                         'payments' => [],
                     ];
                 }
@@ -1181,11 +1301,31 @@ if ($tcsClient !== null) {
 }
 
 // ---------- Этап 4: конвертация Finam-позиций + обогащение облигаций ----------
+// Типы/имена Finam-инструментов из справочника MOEX ISS (фонды «…ETF»,
+// имена фьючерсов). Без сети/справочника не фатально — останутся
+// эвристики finamSymbolType.
+$issMeta = [];
+if ($finamRawPositions !== []) {
+    $issTickers = [];
+    foreach ($finamRawPositions as $pos) {
+        $t = tickerFromSymbol($pos['symbol']);
+        // облигации типизируются без сети (реестр/ISIN) — ISS не нужен,
+        // иначе справочник дёргается на каждую из сотни облигаций; он про
+        // неоднозначное: MISX-акции/фонды и имена фьючерсов
+        if (finamSymbolType($pos['symbol'], $t) === 'bond') continue;
+        if (!in_array($t, $issTickers, true)) $issTickers[] = $t;
+    }
+    if ($issTickers !== []) {
+        $progress->step('finalize', 0.6, 'Справочник инструментов MOEX…', 'system');
+        $issMeta = issMetaFor($issTickers, $timeout, $insecure, $ttl);
+    }
+}
 $progress->finish('finalize', 'Слияние позиций и расчёт итогов…');
 
 $bondLookup = buildBondLookup($bonds);
 foreach ($finamRawPositions as $pos) {
-    mergeFinamPosition($holdings, $pos, findBond($bondLookup, tickerFromSymbol($pos['symbol'])));
+    $t = tickerFromSymbol($pos['symbol']);
+    mergeFinamPosition($holdings, $pos, findBond($bondLookup, $t), $issMeta[$t] ?? null);
 }
 foreach ($holdings as &$h) {
     if ($h['instrumentType'] !== 'bond') continue;

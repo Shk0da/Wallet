@@ -25,6 +25,7 @@ const WalletSync = (() => {
     const PORTFOLIO_KEY = 'walletPortfolio';   // вместо portfolio.json
     const BONDS_KEY     = 'walletBondsCache';  // вместо bonds-cache.json
     const SETTINGS_KEY  = 'walletSettings';    // вместо settings.json
+    const ISS_META_KEY  = 'walletIssMetaCache';  // тикер Finam → тип/имя (MOEX)
 
     // Аналог секции sync в settings.json (UI для этих параметров в приложении нет)
     const REQUEST_TIMEOUT_SEC   = 30;
@@ -164,6 +165,20 @@ const WalletSync = (() => {
     // Тикер из Finam-символа "SU26238RMFS4@TQOB" → "SU26238RMFS4"
     function tickerFromSymbol(symbol) {
         return String(symbol).split('@')[0];
+    }
+
+    // Площадка из Finam-символа "ONZ6@RTSX" → "RTSX". RTSX/RFUD/FORTS —
+    // срочный рынок (фьючерсы); TQOB/TQCB — облигации; MISX одна на акции
+    // и фонды (SBER@MISX и FMMM@MISX) — её типом не считаем.
+    function boardFromSymbol(symbol) {
+        const parts = String(symbol).split('@');
+        return parts.length > 1 ? parts[1] : '';
+    }
+
+    // Finam-символ похож на код фьючерса MOEX? Буквы + код месяца поставки
+    // (FGHJKMNQUVXZ) + цифра года: SiZ5, ONZ6, MIXZ5. Подстраховка к площадке.
+    function isFuturesSymbol(ticker) {
+        return /^[A-Z]{1,4}[FGHJKMNQUVXZ][0-9]$/.test(String(ticker).toUpperCase());
     }
 
     // Базовый тикер: T-Invest помечает внебиржевые площадки суффиксом "@" (TMON@ → TMON).
@@ -523,9 +538,96 @@ const WalletSync = (() => {
         return null;
     }
 
+    // ---------- Справочник MOEX ISS: тип/имя для позиций Finam ----------
+    // Finam не отдаёт тип инструмента, а площадка MISX одна на акции и фонды
+    // (SBER@MISX и FMMM@MISX). Публичный справочник MOEX (без авторизации —
+    // не зависит от брокеров): SHORTNAME фондов кончается на «ETF» (FMMM ETF,
+    // TMOS ETF), фьючерсы торгуются на RFUD/FORTS. Разбор отделён от сети —
+    // тестируется офлайн.
+
+    // Ответ ISS {description, boards} → {type: 'etf'|'futures'|'share', name}
+    function parseIssMeta(data) {
+        if (data == null || typeof data !== 'object') return null;
+        const desc = {};
+        for (const row of (data.description && data.description.data) || []) {
+            if (row != null && row[0] != null) desc[String(row[0])] = row[2] != null ? String(row[2]) : '';
+        }
+        if (desc.SECID === undefined) return null;
+        const short = desc.SHORTNAME || '';
+        let type = /ETF$/i.test(short.trim()) ? 'etf' : 'share';
+        const boards = data.boards && Array.isArray(data.boards.data) ? data.boards.data : [];
+        const bi = data.boards && Array.isArray(data.boards.columns) ? data.boards.columns.indexOf('boardid') : -1;
+        if (bi >= 0) {
+            for (const b of boards) {
+                const bd = b != null && b[bi] != null ? String(b[bi]) : '';
+                if (bd === 'RFUD' || bd === 'FORTS' || bd === 'RTSX' || bd.indexOf('FUT') === 0) {
+                    type = 'futures';
+                    break;
+                }
+            }
+        }
+        return { type: type, name: desc.NAME || short || '' };
+    }
+
+    // Одна запись справочника; null = не нашли/сеть — не фатально
+    async function fetchIssMeta(ticker, timeout, insecure) {
+        try {
+            const pair = httpCall('GET',
+                'https://iss.moex.com/iss/securities/' + encodeURIComponent(ticker) + '.json?iss.meta=off',
+                null, {}, timeout, insecure);
+            if (pair[0] !== 200) return null;
+            let data = null;
+            try { data = JSON.parse(pair[1]); } catch (e) { data = null; }
+            return parseIssMeta(data);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Тикеры → {type, name} с суточным кэшем (отрицательный ответ тоже
+    // кэшируем — 404 не дёргает MOEX каждые сутки заново без надобности)
+    async function issMetaFor(tickers, timeout, insecure) {
+        let cache = { cachedAt: new Date().toISOString(), tickers: {} };
+        try {
+            const raw = localStorage.getItem(ISS_META_KEY);
+            if (raw !== null) {
+                const parsed = JSON.parse(raw);
+                if (parsed != null && typeof parsed === 'object' && parsed.tickers != null) cache = parsed;
+            }
+        } catch (e) { /* повреждённый кэш — начнём заново */ }
+        const ttl = BONDS_CACHE_TTL_HOURS * 3600;
+        const fresh = (Date.now() - Date.parse(cache.cachedAt)) / 1000 < ttl;
+        const out = {};
+        for (const t of tickers) {
+            if (cache.tickers[t] !== undefined && fresh) out[t] = cache.tickers[t];
+        }
+        const missing = tickers.filter(t => out[t] === undefined);
+        for (const t of missing) {
+            const m = await fetchIssMeta(t, timeout, insecure);
+            out[t] = m != null ? m : { type: null, name: null };
+            cache.tickers[t] = out[t];
+        }
+        if (missing.length > 0) {
+            cache.cachedAt = new Date().toISOString();
+            try { localStorage.setItem(ISS_META_KEY, JSON.stringify(cache)); } catch (e) { /* приватный режим */ }
+        }
+        return out;
+    }
+
     // Finam-символ похож на облигацию? (длинный буквенно-цифровой тикер)
     function isBondSymbol(ticker) {
         return ticker.length >= 10 && /^[0-9A-Za-z]+$/.test(ticker);
+    }
+
+    // Тип позиции Finam без сети: фьючерсы — по площадке символа (@RTSX) или
+    // коду (SiZ5), облигации — по ISIN-тикету, остальное — акции; фонды
+    // уточняются справочником MOEX ISS (mergeFinamPosition + issMeta).
+    function finamSymbolType(symbol, ticker) {
+        const board = boardFromSymbol(symbol);
+        if (board === 'RTSX' || board === 'RFUD' || board === 'FORTS' || board === 'FUT'
+            || isFuturesSymbol(ticker)) return 'futures';
+        if (isBondSymbol(ticker)) return 'bond';
+        return 'share';
     }
 
     // Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi.
@@ -562,17 +664,25 @@ const WalletSync = (() => {
     }
 
     // Конвертация и слияние позиции Finam в общий список holdings.
-    // Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как в kts).
-    // ФЬЮЧЕРСЫ и ВАЛЮТЫ Finam не раскладываются: /v1/accounts отдаёт только
-    // symbol без типа инструмента, а коды MOEX-фьючерсов (SiZ5, MIXZ5…) от
-    // акций надёжно не отличить — они попадают в holdings как «share».
-    // У T-Invest тип честный (instrumentType='futures'/'currency'),
-    // фьючерсы и валюты обрабатываются там.
-    function mergeFinamPosition(holdings, pos, bond) {
+    // Тип без сети — finamSymbolType (фьючерс по площадке @RTSX или коду,
+    // облигация по ISIN-тикеру, остальное — акции); справочник MOEX ISS
+    // (meta) уточняет фонды («…ETF» в SHORTNAME) и даёт человеческое имя.
+    // Цены облигаций приходят в % от номинала → ₽ через nominal/100 (как
+    // в kts); акции, фонды и фьючерсы Finam отдаёт уже в ₽ за штуку —
+    // множить на номинал их нельзя (иначе ×10).
+    function mergeFinamPosition(holdings, pos, bond, meta) {
         const ticker = tickerFromSymbol(pos.symbol);
-        const nominal = bond != null && bond.nominal != null ? bond.nominal : 1000.0;
-        const avgPriceRub = pos.averagePrice * nominal / 100.0;
-        const curPriceRub = pos.currentPrice * nominal / 100.0;
+        let type = finamSymbolType(pos.symbol, ticker);
+        if (meta != null && meta.type != null) {
+            // площадка MISX одна на акции и фонды — верим ISS; фьючерсы ISS
+            // только подтверждает (RTSX уже распознан по символу)
+            if (type === 'share') type = meta.type;
+            else if (meta.type === 'futures') type = 'futures';
+        }
+        const nominal = type === 'bond' && bond != null && bond.nominal != null ? bond.nominal : 1000.0;
+        const scale = type === 'bond' ? nominal / 100.0 : 1.0;
+        const avgPriceRub = pos.averagePrice * scale;
+        const curPriceRub = pos.currentPrice * scale;
         let key = bond != null && bond.figi !== '' ? bond.figi : ticker;
 
         // figi-ключ не найден — пробуем слить по базовому тикеру и типу
@@ -580,8 +690,7 @@ const WalletSync = (() => {
         if (holdings[key] === undefined) {
             for (const k of Object.keys(holdings)) {
                 const h = holdings[k];
-                if (baseTicker(h.ticker) === ticker &&
-                    h.instrumentType === (bond != null || isBondSymbol(ticker) ? 'bond' : 'share')) {
+                if (baseTicker(h.ticker) === ticker && h.instrumentType === type) {
                     key = k;
                     break;
                 }
@@ -610,12 +719,13 @@ const WalletSync = (() => {
         holdings[key] = {
             figi: bond != null && bond.figi != null ? bond.figi : '',
             ticker: ticker,
-            name: bond != null && bond.name != null ? bond.name : ticker,
-            instrumentType: bond != null ? 'bond' : (isBondSymbol(ticker) ? 'bond' : 'share'),
+            name: bond != null && bond.name != null ? bond.name
+                : (meta != null && meta.name != null && meta.name !== '' ? meta.name : ticker),
+            instrumentType: type,
             quantity: pos.quantity,
             avgPrice: avgPriceRub,
             curPrice: curPriceRub,
-            nominal: nominal,
+            nominal: type === 'bond' ? nominal : 0.0,
             sector: bond != null && bond.sector != null ? bond.sector : '',
             couponPerYear: bond != null && bond.couponPerYear != null ? bond.couponPerYear : 0,
             maturityDate: bond != null && bond.maturityDate != null ? bond.maturityDate : '',
@@ -1248,11 +1358,33 @@ const WalletSync = (() => {
             }
 
             // ---------- Этап 4: конвертация Finam-позиций + обогащение облигаций ----------
+            // Типы/имена Finam-инструментов из справочника MOEX ISS (фонды
+            // «…ETF», имена фьючерсов). Без сети/справочника не фатально —
+            // останутся эвристики finamSymbolType.
+            let issMeta = {};
+            if (finamRawPositions.length > 0) {
+                const issTickers = [];
+                for (const pos of finamRawPositions) {
+                    const t = tickerFromSymbol(pos.symbol);
+                    // облигации типизируются без сети (реестр/ISIN) — ISS не
+                    // нужен, иначе справочник дёргается на каждую из сотни
+                    // облигаций; он про неоднозначное: MISX-акции/фонды и
+                    // имена фьючерсов
+                    if (finamSymbolType(pos.symbol, t) === 'bond') continue;
+                    if (issTickers.indexOf(t) === -1) issTickers.push(t);
+                }
+                if (issTickers.length > 0) {
+                    progress.step('finalize', 0.6, 'Справочник инструментов MOEX…', 'system');
+                    issMeta = await issMetaFor(issTickers, timeout, insecure);
+                }
+            }
             progress.finish('finalize', 'Слияние позиций и расчёт итогов…');
 
             const bondLookup = buildBondLookup(bonds);
             for (const pos of finamRawPositions) {
-                mergeFinamPosition(holdings, pos, findBond(bondLookup, tickerFromSymbol(pos.symbol)));
+                const t = tickerFromSymbol(pos.symbol);
+                mergeFinamPosition(holdings, pos,
+                    findBond(bondLookup, t), issMeta[t] != null ? issMeta[t] : null);
             }
             for (const k of Object.keys(holdings)) {
                 const h = holdings[k];
@@ -1368,7 +1500,7 @@ const WalletSync = (() => {
         }
     }
 
-    return { runSync, currencyMeta };
+    return { runSync, currencyMeta, finamSymbolType, parseIssMeta, mergeFinamPosition };
 })();
 window.WalletSync = WalletSync;
 

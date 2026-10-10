@@ -773,7 +773,46 @@ ok((pfFut.holdings || []).length === 10 && pfFut.totals.cash === 62800,
     'рубли: строка не в pipeline — holdings по-прежнему 10, кэш в totals.cash');
 ok(Math.round(pfFut.totals.byType.currency) === 102100,
     'рубли: byType.currency без кэша (строка — только отображение)');
-/* FINAM-TYPING-PLACEHOLDER */
+
+section('Finam: типы инструментов (фонды и фьючерсы)');
+// Finam не отдаёт тип инструмента, а площадка MISX одна на акции и фонды.
+// Тип: фьючерс по площадке символа (@RTSX) или коду (SiZ5), облигация по
+// ISIN-тикету, фонды — справочник MOEX ISS («…ETF» в SHORTNAME); цены
+// облигаций в % номинала → ₽ (×nominal/100), остальное — уже ₽ (не ×10)
+const WS = offlineWindow.WalletSync;
+ok(WS.finamSymbolType('ONZ6@RTSX', 'ONZ6') === 'futures', 'finam: @RTSX → фьючерс');
+ok(WS.finamSymbolType('SiZ5@MISX', 'SiZ5') === 'futures', 'finam: код SiZ5 → фьючерс (без площадки)');
+ok(WS.finamSymbolType('RU000A105SD9@MISX', 'RU000A105SD9') === 'bond', 'finam: ISIN-тикет → облигация');
+ok(WS.finamSymbolType('SBER@MISX', 'SBER') === 'share', 'finam: SBER@MISX → акция (до уточнения ISS)');
+const issEtf = WS.parseIssMeta({ description: { data: [['SECID', 'x', 'FMMM'], ['SHORTNAME', 'x', 'FMMM ETF'], ['NAME', 'x', 'БПИФ Финам Денежный рынок']] }, boards: { columns: ['boardid'], data: [['TQTF']] } });
+ok(!!issEtf && issEtf.type === 'etf' && issEtf.name === 'БПИФ Финам Денежный рынок',
+    'finam: ISS SHORTNAME «…ETF» → фонд с именем');
+const issFut = WS.parseIssMeta({ description: { data: [['SECID', 'x', 'ONZ6'], ['SHORTNAME', 'x', 'OZON-12.26'], ['NAME', 'x', 'Фьючерс OZON-12.26']] }, boards: { columns: ['boardid'], data: [['RFUD']] } });
+ok(!!issFut && issFut.type === 'futures', 'finam: ISS площадка RFUD → фьючерс');
+const finamH = {};
+WS.mergeFinamPosition(finamH, { symbol: 'FMMM@MISX', quantity: 1000, averagePrice: 13.5, currentPrice: 13.98, accountId: '2071478' }, null, issEtf);
+const fmmm = finamH.FMMM;
+ok(!!fmmm && fmmm.instrumentType === 'etf' && fmmm.curPrice === 13.98,
+    'finam: FMMM@MISX → etf по цене 13.98, не ×10 (' + (fmmm ? fmmm.curPrice : '?') + ')');
+WS.mergeFinamPosition(finamH, { symbol: 'ONZ6@RTSX', quantity: 1, averagePrice: 3267, currentPrice: 3270, accountId: '2071478' }, null, issFut);
+ok(!!finamH.ONZ6 && finamH.ONZ6.instrumentType === 'futures' && finamH.ONZ6.curPrice === 3270,
+    'finam: ONZ6@RTSX → фьючерс 3270 ₽/контракт');
+WS.mergeFinamPosition(finamH, { symbol: 'SBER@MISX', quantity: 10, averagePrice: 280.1, currentPrice: 285.83, accountId: '2071478' }, null, null);
+ok(!!finamH.SBER && finamH.SBER.instrumentType === 'share' && finamH.SBER.curPrice === 285.83,
+    'finam: акция без ISS — остаётся share, цена не множится');
+WS.mergeFinamPosition(finamH,
+    { symbol: 'SU26238RMFS4@TQOB', quantity: 100, averagePrice: 54.23, currentPrice: 56.89, accountId: '2027232' },
+    { ticker: 'SU26238RMFS4', figi: 'BBG00RPRPXV0', name: 'ОФЗ 26238', nominal: 1000.0 }, null);
+const ofzH = finamH.BBG00RPRPXV0;
+ok(!!ofzH && ofzH.instrumentType === 'bond' && ofzH.curPrice === 568.9,
+    'finam: облигация — % номинала → ₽ (54.23% × 1000/100 = 542.3, cur 568.9)');
+ok(ofzH.accountQty && ofzH.accountQty['2027232'] === 100 && fmmm.accountQty['2071478'] === 1000,
+    'finam: позиции несут количество по счетам (accountQty)');
+ok(syncSrc.indexOf('iss.moex.com') !== -1 && syncSrc.indexOf('walletIssMetaCache') !== -1,
+    'finam: справочник MOEX ISS с суточным кэшем в sync-client.js');
+ok(phpSrcCur.indexOf('function finamSymbolType') !== -1 && phpSrcCur.indexOf('function parseIssMeta') !== -1
+    && phpSrcCur.indexOf('ISS_META_CACHE') !== -1 && phpSrcCur.indexOf('iss.meta=off') !== -1,
+    'finam: sync.php — зеркальные типы/ISS-справочник');
 
 section('Плашка роста: периоды только по глубине истории');
 // Плашка в KPI «Стоимость» больше не показывает минус-заглушки «— за месяц»:
