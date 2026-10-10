@@ -681,10 +681,10 @@ const accQtys = Array.from(doc.querySelectorAll('#holdingsTable tbody tr td:nth-
     .map(td => td.textContent.trim());
 ok(accQtys[0] === '100' && accQtys[1] === '300',
     'активы: количества НА СЧЁТЕ, не по брокеру (ОФЗ 100 + Газпром 300)');
-ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 9');
+ok(doc.getElementById('htCount').textContent === '2', 'активы: счётчик — видно 2 из 10');
 doc.querySelector('#accFilter .acc-chip[data-account=""]').click();
-ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 9,
-    'активы: «Все счета» возвращает все 9 позиций');
+ok(doc.querySelectorAll('#holdingsTable tbody tr').length === 10,
+    'активы: «Все счета» возвращает все 10 позиций');
 ok(offlineWindow.localStorage.getItem('walletHtAccount') === '',
     'активы: сброс фильтра сохранён (walletHtAccount)');
 
@@ -707,13 +707,16 @@ ok(syncSrc.indexOf("'futures', 'currency'].indexOf(p.instrumentType)") !== -1
     'фьючерсы: T-Invest пускает futures в holdings, computeTotals не режет их');
 
 section('Валюты');
-// Мок несёт USD (1200 × курс 79.8): валюта — полноценный holding, как фьючерсы;
-// рубль (RUB000UTSTOM) не попадает в holdings — это кэш, он уже в GetWithdrawLimits
-const curH = (pfFut.holdings || []).find(h => h.instrumentType === 'currency');
-ok(!!curH && curH.ticker === 'USD' && curH.name === 'Доллар США' && curH.quantity === 1200,
+// Мок несёт USD (1200 × курс 79.8) и юань с биржевым figi BBG… (500 × 12.68):
+// валюта — полноценный holding, как фьючерсы; рубль (RUB000UTSTOM) не попадает
+// в holdings — это кэш, он уже в GetWithdrawLimits
+const curHs = (pfFut.holdings || []).filter(h => h.instrumentType === 'currency');
+ok(curHs.length === 2 && curHs[0].ticker === 'USD' && curHs[0].quantity === 1200,
     'валюты: USD в holdings (ticker из figi, 1200 единиц)');
-ok(pfFut.totals.byType && Math.round(pfFut.totals.byType.currency) === 95760,
-    'валюты: стоимость 1200 × 79.8 в byType (' + (pfFut.totals.byType ? pfFut.totals.byType.currency : '?') + ')');
+ok(!!curHs[1] && curHs[1].ticker === 'CNY' && curHs[1].name === 'Китайский юань',
+    'валюты: юань с figi BBG0013HRTL0 → CNY «Китайский юань»');
+ok(pfFut.totals.byType && Math.round(pfFut.totals.byType.currency) === 102100,
+    'валюты: стоимость USD+CNY в byType (' + (pfFut.totals.byType ? pfFut.totals.byType.currency : '?') + ')');
 const curChip = doc.querySelector('#holdingsTable .ht-type-chip.t-currency');
 ok(!!curChip && curChip.textContent === 'Валюты',
     'валюты: чип типа в «Активах» с меткой «Валюты»');
@@ -725,6 +728,19 @@ const phpSrcCur = readFileSync(path.join(ROOT, 'sync.php'), 'utf8');
 ok(phpSrcCur.indexOf("'currency'], true)") !== -1
     && phpSrcCur.indexOf("str_starts_with($p['figi'], 'RUB')") !== -1,
     'валюты: sync.php — зеркальный фильтр и пропуск рубля');
+// Карта figi→ISO: биржевые BBG…/TCS… не несут ISO в префиксе (BBG0013HRTL0 —
+// юань); карта построена по живому InstrumentsService/Currencies
+const cmProbe = offlineWindow.WalletSync.currencyMeta('BBG0013HRTL0');
+ok(!!cmProbe && cmProbe.ticker === 'CNY' && cmProbe.name === 'Китайский юань',
+    'валюты: currencyMeta(BBG0013HRTL0) → CNY (карта, не префикс BBG)');
+const cmPrefix = offlineWindow.WalletSync.currencyMeta('USD000UTSTSEM');
+ok(!!cmPrefix && cmPrefix.ticker === 'USD',
+    'валюты: неизвестный карте figi — фолбэк на префикс (USD…)');
+const cmGold = offlineWindow.WalletSync.currencyMeta('BBG000VJ5YR4');
+ok(!!cmGold && cmGold.ticker === 'GLD' && cmGold.name === 'Золото',
+    'валюты: металлы — currency-инструменты (золото → GLD «Золото»)');
+ok(phpSrcCur.indexOf("CURRENCY_FIGIS") !== -1 && phpSrcCur.indexOf("'BBG0013HRTL0' => 'CNY'") !== -1,
+    'валюты: sync.php — зеркальная карта figi→ISO');
 
 section('Плашка роста: периоды только по глубине истории');
 // Плашка в KPI «Стоимость» больше не показывает минус-заглушки «— за месяц»:

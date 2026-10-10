@@ -503,15 +503,35 @@ function isBondSymbol(string $ticker): bool {
     return strlen($ticker) >= 10 && ctype_alnum($ticker);
 }
 
-/** Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi
- *  вида USD000UTSTSEM / CNYRUB_TOM_CETS — ISO-код это первые три буквы. */
+/** Валюты: у позиций из GetPortfolio T-Invest пустой ticker, только figi.
+ *  Figi трёх родов: «самоописанные» (USD000UTSTOM, EUR000UTSTOM — ISO в
+ *  префиксе) и биржевые BBG…/TCS…, где префикс про валюту не говорит:
+ *  BBG0013HRTL0 — это юань (CNYRUB_TOM в справочнике). Поэтому сначала
+ *  точная карта figi→ISO по живому InstrumentsService/Currencies (все
+ *  рублёвые пары; металлы — тоже currency-инструменты), для неизвестного
+ *  figi — фолбэк на первые три буквы. */
+const CURRENCY_FIGIS = [
+    'USD000UTSTOM' => 'USD', 'USD800UTSTOM' => 'USD', 'USD0000FIXME' => 'USD', 'BBG0013HGFT4' => 'USD',
+    'EUR000UTSTOM' => 'EUR', 'BBG0013HJJ31' => 'EUR',
+    'BBG0013HRTL0' => 'CNY', 'TCS0013HRTL0' => 'CNY', 'TCS2013HRTL0' => 'CNY',
+    'BBG0013HQ5F0' => 'GBP', 'TCS0013HQ5F0' => 'GBP',
+    'BBG0013HQ5K4' => 'CHF',
+    'BBG0013HQ524' => 'JPY', 'TCS0013HQ524' => 'JPY',
+    'BBG0013HSW87' => 'HKD', 'TCS0013HSW87' => 'HKD',
+    'BBG0013J12N1' => 'TRY', 'TCS0013J12N1' => 'TRY',
+    'BBG0013HG026' => 'KZT', 'BBG0013J7V24' => 'AMD', 'BBG00D87WQY7' => 'BYN',
+    'BBG0013J7Y00' => 'KGS', 'BBG0013HQ310' => 'UZS', 'BBG0013J11P1' => 'TJS',
+    'BBG000VJ5YR4' => 'GLD', 'BBGPLTRUBTOM' => 'PLT', 'BBGPLDRUBTOM' => 'PLD', 'BBG000VHQTD1' => 'SLV',
+];
 const CURRENCY_NAMES = [
     'USD' => 'Доллар США', 'EUR' => 'Евро', 'GBP' => 'Фунт стерлингов', 'CHF' => 'Швейцарский франк',
-    'CNY' => 'Юань', 'JPY' => 'Иена', 'TRY' => 'Турецкая лира', 'HKD' => 'Гонконгский доллар',
+    'CNY' => 'Китайский юань', 'JPY' => 'Иена', 'TRY' => 'Турецкая лира', 'HKD' => 'Гонконгский доллар',
     'KZT' => 'Тенге', 'BYN' => 'Белорусский рубль', 'AMD' => 'Драм', 'GEL' => 'Лари',
+    'KGS' => 'Киргизский сом', 'UZS' => 'Узбекский сум', 'TJS' => 'Таджикский сомони',
+    'GLD' => 'Золото', 'PLT' => 'Платина', 'PLD' => 'Палладий', 'SLV' => 'Серебро',
 ];
 function currencyMeta(string $figi): array {
-    $code = preg_match('/^[A-Z]{3}/', $figi, $m) ? $m[0] : '';
+    $code = CURRENCY_FIGIS[$figi] ?? (preg_match('/^[A-Z]{3}/', $figi, $m) ? $m[0] : '');
     return [
         'ticker' => $code,
         'name' => CURRENCY_NAMES[$code] ?? ('Валюта ' . ($code !== '' ? $code : $figi)),
@@ -753,11 +773,17 @@ function buildMockPortfolio(): array {
          'quantity' => 1200, 'avgPrice' => 74.5, 'curPrice' => 79.8, 'nominal' => 0.0, 'sector' => '',
          'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['tinkoff'],
          'brokerQty' => ['tinkoff' => 1200, 'finam' => 0], 'payments' => []],
+        // Юань с биржевым figi (BBG…, в справочнике — CNYRUB_TOM): префикс
+        // figi про валюту не говорит, ISO даёт карта CURRENCY_FIGIS
+        ['figi' => 'BBG0013HRTL0', 'ticker' => 'CNY', 'name' => 'Китайский юань', 'instrumentType' => 'currency',
+         'quantity' => 500, 'avgPrice' => 11.9, 'curPrice' => 12.68, 'nominal' => 0.0, 'sector' => '',
+         'couponPerYear' => 0, 'maturityDate' => '', 'sources' => ['tinkoff'],
+         'brokerQty' => ['tinkoff' => 500, 'finam' => 0], 'payments' => []],
     ];
 
     $rawAccounts = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'cash' => 42000.0, 'positionsCount' => 7],
+         'cash' => 42000.0, 'positionsCount' => 8],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'cash' => 8500.0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
@@ -770,7 +796,7 @@ function buildMockPortfolio(): array {
     $finamTotal = $result['totals']['byBroker']['finam']['value'] + 12300.0;
     $result['accounts'] = [
         ['broker' => 'tinkoff', 'id' => '2000123456', 'name' => 'Брокерский счёт', 'type' => 'ACCOUNT_TYPE_TINKOFF',
-         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 382600.0, 'positionsCount' => 7],
+         'equity' => round($tcsTotal * 0.78, 2), 'cash' => 42000.0, 'futuresValue' => 382600.0, 'positionsCount' => 8],
         ['broker' => 'tinkoff', 'id' => '2000123457', 'name' => 'ИИС', 'type' => 'ACCOUNT_TYPE_TINKOFF_IIS',
          'equity' => round($tcsTotal * 0.22, 2), 'cash' => 8500.0, 'futuresValue' => 0, 'positionsCount' => 2],
         ['broker' => 'finam', 'id' => 'FAB00012345', 'name' => 'Finam Брокерский', 'type' => '',
