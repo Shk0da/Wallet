@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         // Строка состояния под фон приложения (#F6F7F8) с тёмными значками —
-        // стык с вёрсткой WebView незаметен (стиль T-Bank: светлая тема, жёлтый акцент).
+        // стык с вёрсткой WebView незаметен (светлая тема, жёлтый акцент).
         // Тёмная тема переключает строку состояния через мост setStatusBarTheme().
         getWindow().setStatusBarColor(0xFFF6F7F8);
         getWindow().getDecorView().setSystemUiVisibility(

@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-const WWW = '/Users/a.shkondin/Documents/Projects/wallet/android/assets/www';
+const WWW = path.join(__dirname, '..', 'android', 'assets', 'www');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const OLD_PORTFOLIO = {

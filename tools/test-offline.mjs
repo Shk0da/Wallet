@@ -23,10 +23,19 @@ function section(t) { console.log('\n== ' + t); }
 
 // ---------- Фикстура календаря (синтетика, без личных данных) ----------
 
+// «Интернет» — ежемесячная серия с ДИНАМИЧЕСКОЙ датой (завтра, а в
+// последний день месяца — сегодня): список предстоящих операций берёт
+// только текущий месяц и отбрасывает прошлое, хардкод-дата флейкает
+// тест на .tx-avatar на следующий день после неё
+const upT = new Date(); upT.setDate(upT.getDate() + 1);
+const upNow = new Date();
+if (upT.getMonth() !== upNow.getMonth() || upT.getFullYear() !== upNow.getFullYear()) upT.setDate(upNow.getDate());
+const UPCOMING_ISO = upT.getFullYear() + '-' + ('0' + (upT.getMonth() + 1)).slice(-2) + '-' + ('0' + upT.getDate()).slice(-2);
+
 const FIXTURE = {
     transactions: [
         { id: 't1', name: 'Зарплата', date: '2026-09-05', amount: 50000, type: 'income', period: 'monthly', category: 'Доход' },
-        { id: 't2', name: 'Интернет', date: '2026-10-10', amount: 700, type: 'expense', period: 'monthly', category: 'Связь' },
+        { id: 't2', name: 'Интернет', date: UPCOMING_ISO, amount: 700, type: 'expense', period: 'monthly', category: 'Связь' },
         { id: 't3', name: 'Продукты', date: '2026-10-06', amount: 3000, type: 'expense', period: 'once', category: 'Еда' }
     ],
     categories: [
@@ -130,7 +139,7 @@ ok(doc.querySelectorAll('.day-cell').length === 42, 'календарь: 42 яч
 const txCount = doc.querySelectorAll('.day-transaction').length;
 ok(txCount >= 3, 'в месяце есть транзакции (monthly-серия + once): ' + txCount);
 
-section('Автономный бандл: мобильная вёрстка (Т-Банк)');
+section('Автономный бандл: мобильная вёрстка');
 const daySums = doc.querySelectorAll('.day-sums');
 ok(daySums.length >= 2, 'day-sums: компактные суммы в ячейках (' + daySums.length + ')');
 ok(doc.querySelector('.day-sums .ds-in') !== null

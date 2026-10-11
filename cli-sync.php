@@ -13,7 +13,7 @@
  * локальный доверенный контекст (доступ к shell уже означает доступ к settings.json).
  *
  * Пример для кронтаба (09:30 и 23:30 каждый день):
- *   30 9,23 * * * /Users/a.shkondin/Documents/Projects/WALLET/sync-cron.sh >/dev/null 2>&1
+ *   30 9,23 * * * /путь/к/wallet/sync-cron.sh >/dev/null 2>&1
  */
 
 declare(strict_types=1);

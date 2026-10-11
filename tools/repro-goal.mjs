@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'fs';
 import path from 'path';
 
-const WWW = '/Users/a.shkondin/Documents/Projects/wallet/android/assets/www';
+const WWW = path.join(__dirname, '..', 'android', 'assets', 'www');
 const FIXTURE = {
     transactions: [
         { id: 't1', name: 'Зарплата', date: '2026-09-05', amount: 50000, type: 'income', period: 'monthly', category: 'Доход' },
